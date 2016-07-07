@@ -1,0 +1,2 @@
+MailBoxCheck() - проверять postmaster только если проверяемый ящик не
+                 postmaster.

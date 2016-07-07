@@ -1,0 +1,59 @@
+2016-06-20 ver. 1.1.2
+  - Value <spam-urihost-ttl> parse error - fixed.
+  - New scoring for letters: not local client and local sender and local
+    recipient. A new configuration node <score-extclnt-locsender-locrcpt>.
+  - File GrLst.txt reading bug fixed (empty e-mail address at I-line).
+  - Session Id in X-SF.
+
+2016-02-14 ver. 1.1.1
+  - A new statistics item "spam-urihosts-found" - number of spam messages that
+    contains host names collected by spamtrap.
+  - Small memory leak on reconfiguration - fixed.
+  - Command execution timeout. New configuration node: <command-timeout> and
+    node <command-timeout> at statictic.
+
+2016-01-24 ver. 1.1.0
+  - A new format of queries. It allows easy integration into MTA software.
+  - A more flexible verification sender mailbox.
+  - Reduce a number of DNS requests (reverse DNS lookup) while mail receiving
+    from ISP/secondary MX servers.
+  - Improved structure of the configuration file.
+  - Weasel piped output support.
+
+2016-01-12 ver. 1.0.2
+  - SYS3175 when receiving mail from the relay - fixed.
+  - Details in anwser for messages to spamtrap:
+      messages from Internet:    SPAM: spamtrap=xxx@xxx.xx
+      messages from local users: NOTSPAM: spamtrap=xxx@xxx.xx
+    File sfQuery.cmd updated to prevent saving spamtraped messages from local
+    users.
+    The counter "spam-trap" in stat.xml ignores messages from local users.
+  - Human readable format for files/data sizes in the configuration.
+  - Some new messages for logfile.
+
+2016-01-11 ver. 1.0.1
+  - A new attribute "start-stage" for the node "spam-store" tells SF to store
+    SPAM detected on specified and subsequent stages. An aggressive spamers can
+    be detected at stage 0 (by dynamic ip-address list) and there is not much
+    sense to receive messages from them.
+  - Message-ID check (see configuration XML-tree "message-id").
+  - After confirming the existence of a mailbox on the server, the server's
+    response for fake mailbox checked - some spammers services respond "250 OK"
+    for any mailbox.
+  - A local users may forward a spam letters to the spamtrap to collect spam
+    hyperlink hostnames from the message body.
+  - The sender address was not logged and stored at the session object
+    after message "MAIL FROM ??? matches the configured pattern." - fixed.
+  - Human readable format for time intervals in the configuration.
+
+2016-01-10 ver. 1.0.0
+  - Field X-SF will not be set for messages from local users while the
+    attribute "from-local" of the node "update-header" at the configuration is
+    tuned off.
+  - The maximum number of open sessions for a single IP-address may be limited,
+    see configuration node "ip-max-sess".
+  - When "update-header" enabled the session data like EHLO, MAIL FROM, TO
+    will be loggeded even if the final answer has been received.
+
+2016-01-09 ver. 1.0.0
+  First public release.

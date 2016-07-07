@@ -1,0 +1,460 @@
+<?xml version="1.0"?>
+<config>
+  <!--
+        Configuration XML-tree for SpamFilter.
+ 
+        Entries of network addresses should be as follows:
+          nnn.nnn.nnn.nnn                 - IP-address,
+          nnn.nnn.nnn.nnn/bits            - IP-address and number of mask bits,
+          nnn.nnn.nnn.nnn/nnn.nnn.nnn.nnn - IP-address and network mask,
+          nnn.nnn.nnn.nnn-nnn.nnn.nnn.nnn - range of IP-addresses,
+          host?.domain.*.name             - domain name pattern,
+          any, all                        - matches any ip-addresses.
+ 
+        Attributes and values of points scores can be integer value less than
+        zero (for "not like spam" mail), greater than zero (for "more like
+        spam" mail) or one of strings:
+          SPAM - defines clearly as spam,
+          NOT_SPAM, NOT-SPAM, NOTSPAM - defines clearly as not-a-spam,
+          NONE, NEUTRAL, 0 - do not change session score.
+ 
+        Time intervals may be set as integer equal or greater than zero - a
+        number of seconds or string as follows:
+          [N days] [N hours] [N minutes] [N seconds]
+          [N day] [N hour] [N min] [N sec]
+          [Nd] [Nh] [Nm] [Ns]
+        For example: "4hours 30m"
+ 
+        Sizes of logfile, message files and others can be specified with
+        suffixes: B, Bytes, K, Kb, Kbytes, etc. Or as integer equal or greater
+        than zero - the number of bytes.
+ 
+        Turn on values for switches (any other value will turn them off):
+        1, ON, YES, Y (case insensitive).
+  -->
+
+  <!-- Directory to save some data. -->
+  <path-data>.\data</path-data>
+
+  <!-- Directory to save logfiles. -->
+  <path-log>.\log</path-log>
+
+  <!-- Minimal lightweight logging (1..5). -->
+  <log-level>5</log-level>
+
+  <!-- Maximum size of the logfile. If 0 is specified or <log-size> is not set
+       then files will be renamed every day in YYYYMMDD.log (where YYYYMMDD is
+       for year, month and day).  -->
+  <log-size>1Mb</log-size>
+
+  <!-- Specifies number of logfile rotations to make when size of logfile
+       reached log-size. -->
+  <log-history>10</log-history>
+
+  <!-- Local socket on which SpamFilter will receive requests. Name of socket
+       will be \socket\xxxx, where xxxx is value of <socket>.
+       Changing of this field requires restart of SF before changes take effect. -->
+  <socket>SPAMFILTER</socket>
+
+  <!-- Named pipe on which SpamFilter will receive requests.
+       Name of named pipe will be \PIPE\xxxx, where xxxx is value of <pipe>.
+       Attribute "number" (1..25) specifies how many instances of the pipe will
+       be created. No pipes will be created if this node is not specified.
+       Changing this field requires restarting SF before changes take effect.
+       -->
+  <pipe number="10">SPAMFILTER</pipe>
+
+  <!-- How many threads will be handling incoming requests (1..100). -->
+  <threads>10</threads>
+
+  <!-- Listen the piped output from Weasel to catch session close events.
+       When using Weasel is not possible to know when the SMTP session is
+       closed. You may enable this option to get information through the Weasel
+       piped output and reduce the amount of open sessions that await timeout.
+       To use this feature the piped log output must be enabled in the Weasel
+       settings - see the "Logging" page in the Setup notebook.
+       If the attribute "screen" tuned on, the messages will be duplicated on
+       the screen.
+       Changing this field requires restarting SF before changes take effect.
+       -->
+  <weasel-log-pipe screen="Yes">Yes</weasel-log-pipe>
+
+  <!-- Address (and port - optional) of the names server. If port is not
+       specified, the value 53 will be used.  -->
+  <name-server>172.26.96.1:53</name-server>
+
+  <!-- MTA domain name how it configured in mail server (our host name). -->
+  <mail-server-name>mail.network.dom</mail-server-name>
+
+  <!-- Names of all local mail domains separated by SPACE or in separated
+       nodes <local-domain>. -->
+  <local-domain>network.dom *.company.dom branch-*.network.dom</local-domain>
+
+  <!-- The path and filename to save the collection of spam emails. Directories
+       in path will be created automatically. Spam messages will not be saved
+       if this option is not specified, but you get traffic savings in
+       this case. The following (case sensitive) replacements will be done:
+       
+         %i - session id                   %s - sender mailbox (mailbox@dom)
+         %S - sender domain (user@domain)  %r - first recipient mailbox
+         %R - first recipient domain       %y - year YYYY
+         %m - month MM                     %d - day of month DD
+         %t - time HHMMSS
+       
+       If attribute "to-trap" is one of 1/yes/on then spam-trapped messages
+       will be stored too.
+       It is recommended to save spam during adjustment and test SpamFilter. -->
+  <spam-store to-trap="Yes">spam\%y-%m-%d\%t-%i</spam-store>
+ 
+  <!-- Whether to add a field X-SF in the header. The data from this field will
+       help you better understand the situation. Values to tune it on:
+       1/yes/on, any other value will turn it off. Default is off.
+       If you specify this option, this will increase the load because the
+       files of every message will be overwritten to add header field.
+       Field X-SF will not be set for messages of local senders while
+       attribute "from-local" is not 1/yes/on. -->
+  <update-header from-local="No">Yes</update-header>
+
+  <!-- Command execution timeout. Default is 3 min. -->
+  <command-timeout>3 min</command-timeout>
+
+  <!-- Hostnames from EHLO and links in messages bodies will be checked with
+       URIBL (URI Black Lists). If this is not specified, the check will not be
+       made. -->
+  <uribl>
+    <!-- URIBL Service Providers. Domain Names of URIBLs to use. -->
+    <provider>dbl.spamhaus.org multi.surbl.org</provider>
+ 
+    <!-- Stop scan URIBLs from "provider" after "hits" times name founded
+         in blacklists. This number should be equal to or less than URIBL
+         Service Providers.
+         If the number of hits is equal <hits>, the email is flagged "positive".
+         If the number of hits is greater than zero and less than <hits>, the
+         email is flagged "neutral".  -->
+    <hits>2</hits>
+ 
+    <!-- Set (increment) score when name was found lists <hits> times. -->
+    <score-positive>Spam</score-positive>
+
+    <!-- Set (increment) score when name was found in lists greater than zero
+         and less than <hits> times. -->
+    <score-neutral>30</score-neutral>
+
+    <!-- This prevents specific names from being checked by URIBL module.
+         You don't need duplicate <local-domain> names here. -->
+    <!-- <not-spam>*.services.dom www.hosting.dom</not-spam> -->
+  </uribl>
+
+  <!--
+    SMTP session check commands. Atributes "ttl" of nodes "command-XXXXX" is
+    expiration time after command. After "ttl" time interval session will be
+    destroyed. Command will be answered "SPAM" when the session total scores
+    exceed value "score-limit" of nodes <command-ataccept>, <command-mail>,
+    <command-data> and <command-ataccept>. Attribute "score-limit" should not
+    be less than value for previous command.  -->
+
+  <command-ataccept ttl="5 min" score-limit="100">
+    <!-- List of all ISP/secondary MX servers that can send mail for us. If
+         client is one of relay servers - increment session scores (if
+         attribute "score" is specified of the corresponded node "addr"),
+         message will not checked up to @CONTENT. When we have message file,
+         spam filter looks for first host behind specified relays and
+         <mail-server-name> (scans fields "Received") and pass all checks
+         (except EHLO) for the founded ip-address. This list should contains
+         all names of you MTA also, except specified in option
+         "mail-server-name". If you receive all mail from IPS mail server you
+         should point ip-address of this server here.
+         
+    <relay>
+      <addr score="none">1.2.3.0/24 *.local.dom ns.frs.snc.ru</addr>
+    </relay>
+    -->
+
+    <!-- List of all local networks. -->
+    <local>172.26.0.0/16 192.168.0.0/16 *.sakh.rao-esv.ru</local>
+
+    <!-- The maximum number <max-ataccept> of @ACCEPT for a single IP-address
+         during the time interval <duration>. If makes more than <max-ataccept>
+         commands @ACCEPT within the <duration> IP-address will be banned from
+         future @ACCEPT (the following commands will be the result of SPAM for
+         this IP) until the <expiration> is reached. This can be used to
+         prevent server overloading and DoS attacks.
+         By default, the frequency control for @ACCEPT is not used if
+         <ip-frequency> is not specified.  -->
+    <ip-frequency>
+       <max-ataccept>10</max-ataccept>
+       <duration>90 sec.</duration>
+       <!-- By default, if expiration is not specified - add
+            [duration / max-ataccept] seconds to the ban on each @ACCEPT over
+            limit. -->
+       <expiration>1 hour</expiration>
+       <!-- Don't do frequency check for these IPs and host names.
+            You can points IP-addresses, IP-networks, ranges of IP-addresses,
+            templates of host names (wildcards are supported).
+            You may specify multiple <ignore> nodes.
+            -->
+       <ignore>192.168.201.0/24 192.168.202.5 *.some.domain</ignore>
+    </ip-frequency>
+
+    <!-- Session scoring by client address.
+
+    <score-host>
+       <addr score="not-spam">188.168.190.92/24</addr>
+       <addr score="-10">93.188.46.127</addr>
+       <addr score="50">*.co.ua *.biz.ua *.ukrdomen.com</addr>
+       <addr score="70">s1.*.ru</addr>
+       <addr score="NOT-SPAM">mail-*.google.com</addr>
+       <addr score="NOT-SPAM">*.i.mail.ru</addr>
+    </score-host>  -->
+
+    <!-- Scores for the client without PTR record (registered host name). -->
+    <score-no-ptr>70</score-no-ptr>
+  </command-ataccept>
+
+  <command-rset ttl="5 min"/>
+  <command-ehlo ttl="5 min"/>
+
+  <command-mail ttl="5 min" score-limit="110">
+
+    <!-- On-line whitelists systems (check client IP-address). -->
+    <rwl>
+      <!-- RWL (DNSWL) providers. You may specify multiple <provider> nodes. -->
+      <provider>list.dnswl.org query.bondedsender.org</provider>
+
+      <!-- RWL systems returns "trust level":
+           1 - highly unlikely to send spam ... 3 - legitimate mail servers,
+           but they may also emit spam. -->
+      <score level="1">-10</score>
+      <score level="2">-7</score>
+      <score level="3">-3</score>
+
+      <!--
+      Don't get RWL "trust level" for these IPs and host names.
+      <ignore>192.168.201.0/24 192.168.202.5 *.some.domain</ignore>
+      -->
+    </rwl>
+
+    <!-- Scoring of MAIL FROM string. These templates are applied to the entire
+         line, including "<", ">" and parameters.  -->
+    <score-mailfrom>
+      <!-- I have lot of spammer's connections where MAIL FROM contains
+           parameters "BODY=8BITMIME".  -->
+      <addr score="100">&lt;*&gt; BODY=8BITMIME</addr>
+    </score-mailfrom>
+
+    <!-- Scores for same EHLO values. You can points here all your external
+         IP's with score="spam". The values must be separated by spaces and/or
+         grouped into single nodes <addr>. -->
+    <score-ehlo>
+      <addr score="spam">localhost 127.0.0.1 212.6.1.74</addr>
+      <addr score="spam">User 192.168.0.0/16</addr>
+      <addr score="50">[*.*.*.*]</addr>
+      <addr score="not-spam">*.os2world.net</addr>
+      <addr score="25">*.eu</addr>
+    </score-ehlo>
+
+    <!-- Check EHLO (DNS record, URIBL) only when RWL's "trust level" (detected
+         on @ACCEPT) less ("more trust") than value "ehlo-on-rwl":
+           1 - check EHLO always;
+           2 - check for RWL "trust level" 2,3 or client does not listed in RWL;
+           3 - check for RWL "trust level" 3 or client does not listed in RWL;
+           4 - check EHLO only if client was not founded in whitelists. -->
+    <ehlo-on-rwl>3</ehlo-on-rwl>
+
+    <!-- Scoring invalid EHLO -->
+    <score-invalid-ehlo>40</score-invalid-ehlo>
+
+    <!-- Don't do URIBL check for EHLO for these clients.
+         You can points IP-addresses, IP-networks, ranges of IP-addresses,
+         templates of hostn names (wildcards are supported).  -->
+    <!-- <ehlo-uribl-ignore>192.168.18.2-192.168.18.12</ehlo-uribl-ignore> -->
+  </command-mail>
+
+  <command-rcpt ttl="5 min"/>
+
+  <command-data ttl="3 hour" score-limit="110">
+    <!-- Auto-whitelist is a list of recipients of our users (to whom our users
+         sent letters). All whitelisted users can send mail to our users
+         without checking. Value "ttl" specifies how long whitelisted record
+         will be kept in the auto-whitelist. -->
+    <autowhitelist ttl="60 days">
+      <!-- List of local senders that cannot contribute to the auto-whitelist.
+           Wildcards are supported. -->
+      <!-- <ignore-senders>noreply@company.dom no-reply@company.dom</ignore-senders> -->
+      <!-- <ignore-senders>auto-responder??@company.dom</ignore-senders> -->
+    </autowhitelist>
+ 
+    <spamtrap>
+      <!-- Mailboxes to lure spam. These local addresses SHOULD really exist
+           (not for communication). All messages to the any of this addresses
+           will be detected as "SPAM". Host names from body (except
+           <uribl>/<not-spam>) of trapped message will be collected to
+           determine the affiliation to spam other messages.
+           The values must be separated by spaces and/or grouped into single
+           nodes "spamtrap".
+           You may specify multiple <spamtrap> nodes. -->
+      <address>collector@network.dom adcommon@office01.company.dom</address>
+ 
+      <!-- IP-addresses of senders who send mail to <address> will be collected
+           and scored later on @ACCEPT. Applies only to not-local senders.
+           <score-client> - score for those IPs.
+           "ttl" - time interval an IP-addresses will be kept. -->
+      <score-client ttl="6 hours">25</score-client>
+    </spamtrap>
+
+    <!-- Score: not local client and local sender and local recipient. -->
+    <score-extclnt-locsender-locrcpt>15</score-extclnt-locsender-locrcpt>
+
+    <!-- Execute the following checks only if RWL's "trust level" (detected
+         on command MAIL) less ("more trust") than value "mailfrom-on-rwl".
+           1 - check MAIL FROM always;
+           2 - check for RWL "trust level" 2, 3 or client does not listed in RWL;
+           3 - check for RWL "trust level" 3 or client does not listed in RWL;
+           4 - check MAIL FROM only if client was not founded in whitelists. -->
+    <mailfrom-on-rwl>2</mailfrom-on-rwl>
+ 
+    <!-- Greylist - delaying mail.
+         Attribute "ttl" - how long a triplet ip+sender+recepient will be kept
+         in the greylist.
+         By default (no <greylist> tree), greylist/delaying not uses. -->
+    <greylist ttl="2h">
+      <!-- For timed out greylist triplets a coefficients [creates/updates] for
+           the client ip: num/den, where num - number of times when triplet
+           with listed IP was requested after delaying, den - total number of
+           times when the IP was listed. The greylist will not be used for IP
+           when this ratio is more than num/den.
+           In other words, if IP was greylisted den times and requested
+           (message re-sent after a delaying) more then num times - all
+           messages from this IP-address will not be delayed. Value of node
+           <coefficient> is how long to keep calculated coefficients for each
+           IP-address. -->
+      <coefficient num="13" den="15">14 days</coefficient>
+      <!-- Use <mask> as a matching mask when checking IP-addresses entries
+           in the greylist. This is aimed as a workaround to mail farms that
+           re-emit messages from different IP addresses.
+           Default is 255.255.255.0 -->
+      <mask>255.255.255.0</mask>
+      <!-- Do not delay mail for these senders. Be careful not to put widely
+           used domains here like *@google.com or *@hotmail.com. -->
+      <ignore-senders>*@boo.dom admin@secret.dom</ignore-senders>
+      <!-- Don't delay mail from these clients. -->
+      <ignore>192.168.102.21/32 *.boo2.dom</ignore>
+    </greylist>
+
+    <!-- Realtime blacklist databases. -->
+    <dnsbl>
+       <!-- List of DNSBL providers. Provider different answers scoring
+            specifies in nodes <addr> - value of node is a answer and attribute
+            "score" is scores for this answer. Scores of all "trigged"
+            providers are added to session score. -->
+       <provider name="zen.spamhaus.org">
+          <!-- XBL: 127.0.0.4
+               The Spamhaus Exploits Block List (XBL) is a
+               realtime database of IP addresses of hijacked PCs infected by
+               illegal 3rd party exploits, including open proxies (HTTP, socks,
+               AnalogX, wingate, etc), worms/viruses with built-in spam
+               engines, and other types of trojan-horse exploits. -->
+          <addr score="90">127.0.0.4</addr>
+
+          <!-- PBL: 127.0.0.10, 127.0.0.11
+               The PBL is simply a list of all of the world's dynamic IP space,
+               i.e: IP ranges normally assigned to ISP broadband customers
+               (DSL, DHCP, PPP, cable, dialup). -->
+          <addr score="40">127.0.0.10-127.0.0.11</addr>
+          <addr score="30">any</addr>
+       </provider>
+       <provider name="safe.dnsbl.sorbs.net">
+          <addr score="30">any</addr>
+       </provider>
+
+       <!-- Stop scan providers after "hits" times when client IP founded. -->
+       <hits>1</hits>
+
+       <!-- Don't do DNSBL check for this clients. -->
+       <!-- <ignore>192.168.201.10 192.168.201.11</ignore> -->
+    </dnsbl>
+
+    <!--
+    Do not domain of sender address URIBL check for this clients.
+    <mailfrom-uribl-ignore>192.168.12.21/32</mailfrom-uribl-ignore>
+    -->
+
+    <!-- Evaluation of sender mail box check results.
+         Results: EXIST - mail box exists,  NOT-EXIST - mailbox does not exist,
+                  NO-POSTMASTER - sender's domain has no postmaster,
+                  ANY-EXIST - result for a fake mail box name is "exist",
+                  FAILED - SMTP protocol invalid answer,
+                  CONNECTION-FAILED - connection error,
+                  TIME-OUT - connection timedout,
+                  REFUSED - connection refused,
+                  NET-UNREACHABLE - connection error: network is unreachable,
+                  NO-BUFFER-AVAILABLE - socket error: no buffer space available.
+         By default (no <sender-mailbox-check>), mailbox will not be checked.
+         -->
+    <sender-mailbox-check>
+      <score result="not-exist">80</score>
+      <score result="no-postmaster">70</score>
+      <score result="any-exist">60</score>
+      <score result="connection-failed">20</score>
+      <score result="time-out">10</score>
+      <score result="refused">80</score>
+      <!-- Don't do mailbox check for these senders. Be careful not to put
+           widely used domains here like *@google.com or *@hotmail.com. -->
+      <!-- <ignore-senders>*@boo.dom admin@secret.dom</ignore-senders> -->
+      <!-- Do not mailbox check for these clients. -->
+      <!-- <ignore>192.168.44.30-192.168.44.40</ignore> -->
+    </sender-mailbox-check>
+
+    <!-- Checking with Sender Policy Framework (SPF). RFC 7208. -->
+    <spf>
+      <!-- Scores for SPF check results. -->
+      <score level="none">5</score>
+      <score level="neutral">5</score>
+      <score level="pass">-5</score>
+      <score level="fail">35</score>
+      <score level="SoftFail">20</score>
+      <score level="TempError">0</score>
+      <score level="PermError">10</score>
+      <!-- Do not SPF check for this clients. -->
+      <!-- <ignore>192.168.102.21/32</ignore> -->
+    </spf>
+  </command-data>
+
+  <command-atcontent ttl="5 min" score-limit="120">
+
+    <!-- The message header's field "Message-ID:" check. -->
+    <message-id>
+      <score-suspicious>5</score-suspicious>
+      <pattern score="20">*@localhost*</pattern>
+      <!-- It's a good idea to place here your host name, same as
+           <mail-server-name>.  -->
+      <pattern score="40">*@mail.network.dom&gt;</pattern>
+      <!-- Clients who don't need to check Message-ID. -->
+      <!-- <ignore>192.168.201.0/24 192.168.202.5 *.some.domain</ignore> -->
+    </message-id>
+
+    <!-- Do message body URIBL check only when RWL's "trust level" (detected
+         on command MAIL) less ("more trust") than value "body-on-rwl".
+           1 - do message body check always;
+           2 - check for RWL "trust level" 2, 3 or client does not listed in RWL;
+           3 - check for RWL "trust level" 3 or client does not listed in RWL;
+           4 - do message check only if client was not founded in whitelists. -->
+    <body-on-rwl>3</body-on-rwl>
+
+    <!-- Maximum bytes of message to scan. -->
+    <max-message>1 Mb</max-message>
+
+    <!-- Maximum bytes of message single text part to scan. -->
+    <max-bodypart>8 Kb</max-bodypart>
+
+    <!-- How long to keep host names from the body of spam-trapped messages. -->
+    <spam-urihost-ttl>200 days</spam-urihost-ttl>
+
+    <!-- When one of host names collected from spam messages founded in message
+         body, score of session changes in value of <score-spam-urihost>. -->
+    <score-spam-urihost>spam</score-spam-urihost>
+  </command-atcontent>
+
+  <command-quit/>
+
+</config>
