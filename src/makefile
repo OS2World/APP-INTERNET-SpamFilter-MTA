@@ -5,7 +5,7 @@
 BINPATH = ..\sf
 LIBPATH = .\lib
 EXENAME = sf
-VERSION = 1.1.2
+VERSION = 1.1.3
 AUTOR = Andrey Vasilkin
 COMMENT = SpamFilter for OS/2 and eComStation
 #DEBUG = 1

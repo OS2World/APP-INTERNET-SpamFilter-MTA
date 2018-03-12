@@ -35,10 +35,12 @@ On each stage the following steps are performed:
   Stage 0. Client ip-address.
 
     1. Detect relay mail server by checking client ip-address/host name.
-       (set flag "relay", skip all stages till 5, on the last stage we can read ip address
-       from message header fields "Received:" and pass through all stages again).
-    2. Detect local sender by client ip-address/host name.
-       (set flag "local sender", end of stage 0 for "local sender").
+       (set flag "relay", skip all stages till 5, on the last stage we can read
+       ip address from message header fields "Received:" and pass through all
+       stages again).
+    2. Set flag local-client if client ip-address/host name mathes configured
+       local networks.
+       (set flag local-client, end of stage 0 for "local sender").
     3. Scoring a client with missing PTR record.
     4. Scoring by internal dynamic ip-address list.
     5. Client ip-address/host name scoring (by user settings).
@@ -50,9 +52,12 @@ On each stage the following steps are performed:
   Stage 2: MAIL FROM address.
 
     1. Check if email address is from one of local domains
-       (set flag "local sender", end of stage 2 for "local sender").
+       (set flag local-sender, end of stage 2 for "local sender").
     2. Search MAIL FROM address by auto-whitelist, it is not a SPAM if
        listed.
+
+    Skip next steps flag local-client or local-sender set.
+
     3. Scoring by configured patterns for MAIL FROM.
     4. Check ip-address with RWL(*).
     5. Check received EHLO on the stage 1 (step is skipped for connections
@@ -283,6 +288,10 @@ users. In this case host names from the message body will be collected in the
 same way as for messages cathed by spamtrap from Internet.
 
 
+
+Donations are most welcome!
+https://www.arcanoae.com/shop/os2-ports-and-applications-by-andrey-vasilkin/
+PayPal: digi@os2.snc.ru
 
 Andrey Vasilkin, 2016
 E-mail: digi@os2.snc.ru

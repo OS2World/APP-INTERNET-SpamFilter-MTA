@@ -1,3 +1,10 @@
+2016-09-16 ver. 1.1.3
+  - Search EHLO strings among names of MX servers of client's domain.
+    Sample:
+      Client: [173.0.84.228] mx3.slc.paypal.com
+      EHLO mx0.slc.paypal.com  <-- Valid MTA for slc.paypal.com.
+  - readme.txt is updated.
+
 2016-06-20 ver. 1.1.2
   - Value <spam-urihost-ttl> parse error - fixed.
   - New scoring for letters: not local client and local sender and local

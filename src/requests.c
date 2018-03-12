@@ -25,6 +25,10 @@
 #define COMMAND_LIST             "@ACCEPT EHLO RSET MAIL RCPT DATA " \
                                  "@CONTENT QUIT"
 
+#define FL_LOCAL_CLIENT          1
+#define FL_LOCAL_SENDER          2
+#define FL_RELAY                 4
+
 typedef struct _SESSCMD *PSESSCMD;
 
 typedef BOOL (*PFNCMD)(PSESS pSess, PSESSCMD pSessCmd);
@@ -583,11 +587,94 @@ static VOID _dynipClean()
 }
 
 
-//           Session commands routines
+//           Session command routines.
 //           -------------------------
 
-// Check functions for commands routines.
-// --------------------------------------
+// Check functions for commands routines
+// (called from command routines _scXXXXX()).
+// ------------------------------------------
+
+static BOOL _sCheckEHLO(PSESS pSess,
+                        struct in_addr stInAddrEHLO) // EHLO in IP-format or -1
+{
+  struct in_addr   aARes[64];
+  ULONG            cARes, cMXRes, ulIdx, ulRC;
+  CHAR             aMXRes[512];
+  PCHAR            pcDomain;
+  PSZ              pszMXName;
+
+  // Compare EHLO with client's host.
+  debug( "EHLO host name: %s, client host: %s",
+         pSess->pszEHLO, STR_SAFE( pSess->pszHostName ) );
+  if ( // Compare EHLO string with client's host name.
+       ( STR_ICMP( pSess->pszEHLO, pSess->pszHostName ) == 0 ) ||
+       // IP-address in EHLO - compare with client's IP-address.
+       ( stInAddrEHLO.s_addr == pSess->stInAddr.s_addr ) )
+    return TRUE;
+
+  if ( stInAddrEHLO.s_addr != (u_long)(-1) ) // IP-address in EHLO.
+    return FALSE;
+
+  // EHLO Host name and client's (session) host name is not same.
+  // Let's try to get IP for EHLO host name and compare it with
+  // client's IP-address.
+
+  debug( "Resolv EHLO %s...", pSess->pszEHLO );
+  ulRC = dnsRequest( DNSREC_TYPE_A, pSess->pszEHLO, sizeof(aARes),
+                     (PCHAR)&aARes, &cARes );
+  if ( ulRC == DNS_CANCEL )
+    return FALSE;
+
+  if ( ulRC != DNS_NOERROR )
+    debug( "dnsRequest(), rc = %u", ulRC );
+  else
+  {
+    debug( "DNS answers: %u", cARes );
+    for( ulIdx = 0; ulIdx < cARes; ulIdx++ )
+      if ( aARes[ulIdx].s_addr == pSess->stInAddr.s_addr )
+        return TRUE;
+  }
+
+  if ( sessIsCommandTimeout( pSess ) )
+    return TRUE;
+
+  // No mathes found - try to compare EHLO string with MX servers for client's
+  // domain.
+
+  if ( pSess->pszHostName == NULL )
+    return FALSE;
+  pcDomain = strchr( pSess->pszHostName, '.' );
+  if ( pcDomain == NULL )
+    return FALSE;
+  pcDomain++;
+  if ( strchr( &pcDomain[1], '.' ) == NULL ) // It should be at least two parts.
+    return FALSE;
+
+  ulRC = dnsRequest( DNSREC_TYPE_MX, pcDomain, sizeof(aMXRes),
+                     &aMXRes, &cMXRes );
+  if ( ulRC == DNS_CANCEL )
+  {
+    sessLog( pSess, 5, SESS_LOG_INFO, "No MX-server found for %s.",
+             pcDomain );
+    return FALSE;
+  }
+
+  // MX Record: 2 bytes - MX-server level, ASCIIZ - host name.
+  for( pszMXName = &aMXRes[sizeof(USHORT)]; cMXRes > 0; cMXRes-- )
+  {
+    if ( stricmp( pszMXName, pSess->pszEHLO ) == 0 )
+    {
+      sessLog( pSess, 5, SESS_LOG_INFO, "EHLO is MX-server for %s.",
+               pcDomain );
+      return TRUE;
+    }
+
+    // Jump to the next name.
+    pszMXName = strchr( pszMXName, '\0' ) + 1 + sizeof(USHORT);
+  }
+
+  return FALSE;
+}
 
 // ULONG _sCheckDNSBL(PSESS pSess)
 //
@@ -930,6 +1017,7 @@ static BOOL _sSaveAndClose(PSESS pSess, PMSGFILE pFile, PSZ pszFileName)
   return fSaved;
 }
 
+
 static VOID _sOnRSET(PSESS pSess)
 {
   if ( pSess->pszSender != NULL )
@@ -939,7 +1027,7 @@ static VOID _sOnRSET(PSESS pSess)
   }
   sessClearRecepient( pSess );
   pSess->lScore = pSess->lScoreClient;
-  pSess->fLocalSender = FALSE; // But do not reset fLocalClient here.
+  pSess->ulClentFlags &= ~FL_LOCAL_SENDER; // But do not reset local-client here.
   pSess->ulRWLLevel = 0;
   if ( pSess->pszSpamTrap != NULL )
   {
@@ -952,6 +1040,7 @@ static VOID _sOnRSET(PSESS pSess)
 static ULONG _sCheckOnAtAccept(PSESS pSess, struct in_addr stInAddr, PSZ pszHostName)
 {
   LONG       lScore;
+  PSZ        pszLogDetail;
 
   pSess->stInAddr = stInAddr;
 
@@ -988,24 +1077,33 @@ static ULONG _sCheckOnAtAccept(PSESS pSess, struct in_addr stInAddr, PSZ pszHost
     }
   }
 
-  // Detect relay.
-  pSess->fRelay = cfgHostListCheck( &pConfig->lsHostListRelays,
-                    pSess->stInAddr, STR_LEN( pSess->pszHostName ),
-                    pSess->pszHostName, &lScore );
-  // Detect local client by the ip-address/host name.
-  pSess->fLocalClient =
-     !pSess->fRelay && sessClientListed( pSess, &pConfig->lsHostListLocal );
+  pSess->ulClentFlags &= ~(FL_LOCAL_CLIENT | FL_RELAY);
 
-  sessLog( pSess, 3, SESS_LOG_INFO, "Client: %s, [%s] %s",
-           pSess->fRelay
-             ? "relay" : ( pSess->fLocalClient ? "local" : "external" ),
+  // Detect relay.
+  if ( cfgHostListCheck( &pConfig->lsHostListRelays,
+                         pSess->stInAddr, STR_LEN( pSess->pszHostName ),
+                         pSess->pszHostName, &lScore ) )
+  {
+    pSess->ulClentFlags |= FL_RELAY;
+    pszLogDetail = "relay";
+  }
+  // Detect local client by the ip-address/host name.
+  else if ( sessClientListed( pSess, &pConfig->lsHostListLocal ) )
+  {
+    pSess->ulClentFlags |= FL_LOCAL_CLIENT;
+    pszLogDetail = "local";
+  }
+  else
+    pszLogDetail = "external";
+
+  sessLog( pSess, 3, SESS_LOG_INFO, "Client: %s, [%s] %s", pszLogDetail,
            inet_ntoa( pSess->stInAddr ), STR_SAFE( pSess->pszHostName ) );
 
-  if ( pSess->fRelay )
+  if ( (pSess->ulClentFlags & FL_RELAY) != 0 )
   {
     sessAddScore( pSess, lScore, "Relay." );
   }
-  else if ( !pSess->fLocalClient &&
+  else if ( (pSess->ulClentFlags & FL_LOCAL_CLIENT) == 0 &&
             // Scoring address by internal dynamic ip-address list.
             !sessAddScore( pSess, _dynipCheck( pSess->stInAddr ),
                       "IP-addres [%s] was found in the dynamic ip-address list.",
@@ -1053,9 +1151,11 @@ static ULONG _sCheckOnMAILFROM(PSESS pSess, ULONG cbFrom, PCHAR pcFrom)
   PCHAR      pcDomain;
   LONG       lScore;
 
+/*
   // pSess->fLocalClient is TRUE when  client is not a relay and from local
   // network  OR  client is a host behind relays and from local network.
   pSess->fLocalSender = pSess->fLocalClient;
+*/
 
   // Session already have "final" score.
   switch( pSess->lScore )
@@ -1066,9 +1166,6 @@ static ULONG _sCheckOnMAILFROM(PSESS pSess, ULONG cbFrom, PCHAR pcFrom)
     case SF_SCORE_NOT_SPAM:
       return REQ_ANSWER_OK;
   }
-
-  if ( pSess->fRelay || pSess->fLocalSender )
-    return REQ_ANSWER_OK;
 
   if ( pSess->pszSender != NULL )
   {
@@ -1084,28 +1181,24 @@ static ULONG _sCheckOnMAILFROM(PSESS pSess, ULONG cbFrom, PCHAR pcFrom)
     // Detect local sender by e-mail address (domain part).
     if ( cfgIsLocalEMailDomain( cbDomain, pcDomain ) )
     {
-      pSess->fLocalSender = TRUE;
+      pSess->ulClentFlags |= FL_LOCAL_SENDER;
       sessLog( pSess, 3, SESS_LOG_INFO, "Sender <%s> is local.",
                     pSess->pszSender );
-//      return REQ_ANSWER_OK;
-    }
-
-    // Search MAIL FROM address in the white list - it is not a SPAM if listed.
-    if ( !pSess->fLocalSender &&
-         addrlstCheck( &stWhiteAddrList, pSess->pszSender ) )
-    {
-      sessAddScore( pSess, SF_SCORE_NOT_SPAM,
-                    "Sender <%s> found in the whitelist.", pSess->pszSender );
-      return REQ_ANSWER_OK;
     }
   } // if ( pSess->pszSender != NULL )
 
+  // Search MAIL FROM address in the white list - it is not a SPAM if listed.
+  if ( addrlstCheck( &stWhiteAddrList, pSess->pszSender ) )
+  {
+    sessAddScore( pSess, SF_SCORE_NOT_SPAM,
+                  "Sender <%s> found in the whitelist.", pSess->pszSender );
+    return REQ_ANSWER_OK;
+  }
 
   // Do not check MAIL FROM by configured patterns, client's IP with RWL, EHLO
-  // for senders in local networs.
-  if ( pSess->fLocalClient )
+  // for senders in local networs or relays (for relays will be second pass.).
+  if ( pSess->ulClentFlags != 0 )
     return REQ_ANSWER_OK;
-
 
   do
   {
@@ -1145,7 +1238,7 @@ static ULONG _sCheckOnMAILFROM(PSESS pSess, ULONG cbFrom, PCHAR pcFrom)
       struct in_addr     stInAddr;
 
       // Name of the local domain is specified in EHLO - spam!
-      if ( !pSess->fLocalSender &&
+      if ( ( (pSess->ulClentFlags & FL_LOCAL_SENDER) == 0 ) &&
            cfgIsMatchPtrnList( pConfig->cbLocalDomains, pConfig->pcLocalDomains,
                                cbEHLO, pSess->pszEHLO ) )
       {
@@ -1178,67 +1271,21 @@ static ULONG _sCheckOnMAILFROM(PSESS pSess, ULONG cbFrom, PCHAR pcFrom)
                !utilStrToInAddr( cbEHLO, pSess->pszEHLO, &stInAddr ) )
           stInAddr.s_addr = (u_long)(-1);
 
-        // Comparing EHLO with client's IP or hostname.
+        // Comparing EHLO IP/hostname with client's IP or hostname.
 
-        if ( pConfig->lScoreInvalidEHLO != SF_SCORE_NONE )
-        {
-          BOOL           fPassed;
+        if ( ( pConfig->lScoreInvalidEHLO != SF_SCORE_NONE ) &&
+             !_sCheckEHLO( pSess, stInAddr ) &&
+             sessAddScore( pSess, pConfig->lScoreInvalidEHLO,
+                           "Invalid host name/address at the EHLO: %s.",
+                           pSess->pszEHLO ) )
+          break;
 
-          if ( stInAddr.s_addr != (u_long)(-1) )
-          {
-            // IP-address in EHLO - compare with client's IP-address.
-            debug( "IP-address specified: %s", pSess->pszEHLO );
-            fPassed = stInAddr.s_addr == pSess->stInAddr.s_addr;
-          }
-          else
-          {
-            // Other string in EHLO - compare with client's host name.
-            debug( "EHLO host name: %s, client host: %s",
-                   pSess->pszEHLO, STR_SAFE( pSess->pszHostName ) );
-            fPassed = ( pSess->pszHostName == NULL ) ||
-                      ( STR_ICMP( pSess->pszHostName, pSess->pszEHLO ) == 0 );
-
-            if ( !fPassed )
-            {
-              // EHLO Host name and client's (session) host name is not same.
-              // Let's try to resolve EHLO host name and compare it with client's
-              // IP-address.
-
-              struct in_addr   aBLRes[64];
-              ULONG            cBLRes, ulIdx, ulRC;
-
-              debug( "Resolv EHLO %s...", pSess->pszEHLO );
-              ulRC = dnsRequest( DNSREC_TYPE_A, pSess->pszEHLO, sizeof(aBLRes),
-                                 (PCHAR)&aBLRes, &cBLRes );
-              if ( ulRC == DNS_CANCEL )
-                return REQ_ANSWER_OK;
-
-              if ( ulRC != DNS_NOERROR )
-                debug( "dnsRequest(), rc = %u", ulRC );
-              else
-              {
-                debug( "DNS answers: %u", cBLRes );
-                for( ulIdx = 0; ulIdx < cBLRes; ulIdx++ )
-                  if ( aBLRes[ulIdx].s_addr == pSess->stInAddr.s_addr )
-                  {
-                    fPassed = TRUE;
-                    break;
-                  }
-                debug( "Passed: %d", fPassed );
-              }
-            }
-          }
-
-          if ( !fPassed &&
-               sessAddScore( pSess, pConfig->lScoreInvalidEHLO,
-                             "Invalid host name/address at the EHLO: %s.",
-                             pSess->pszEHLO ) )
-            break;
-        } // if ( pConfig->lScoreInvalidEHLO != SF_SCORE_NONE )
+        if ( sessIsCommandTimeout( pSess ) )
+          return REQ_ANSWER_ERROR;
 
         // Scoring EHLO by URIBL.
 
-        if ( stInAddr.s_addr != (u_long)(-1) )
+        if ( stInAddr.s_addr == (u_long)(-1) ) // EHLO is not IP.
         {
           if ( sessClientListed( pSess, &pConfig->lsHostListEHLOURIBLIgnore ) )
             sessLog( pSess, 4, SESS_LOG_INFO, "Client [%s] %s is listed in the "
@@ -1287,10 +1334,11 @@ static ULONG _sCheckOnDATA(PSESS pSess)
       return REQ_ANSWER_OK;
   }
 
-  if ( pSess->fRelay )
+  if ( (pSess->ulClentFlags & FL_RELAY) != 0 )
     return REQ_ANSWER_OK;
 
-  if ( ( pSess->fLocalSender ) && ( pConfig->ulTTLAutoWhiteListed != 0 ) &&
+  if ( ( (pSess->ulClentFlags & FL_LOCAL_SENDER) != 0 ) &&
+       ( pConfig->ulTTLAutoWhiteListed != 0 ) &&
        !cfgIsMatchPtrnList( pConfig->cbAutoWhitelistIgnoreSenders,
                             pConfig->pcAutoWhitelistIgnoreSenders,
                             STR_LEN( pSess->pszSender ), pSess->pszSender ) )
@@ -1312,7 +1360,7 @@ static ULONG _sCheckOnDATA(PSESS pSess)
                  STR_SAFE( pSess->pszSender ), pszAddr );
       }
     }
-  } // if ( pSess->fLocalSender )
+  }
 
   // Search spamtrap addresses in the list of recipients.
 
@@ -1342,7 +1390,8 @@ static ULONG _sCheckOnDATA(PSESS pSess)
       }
     }
 
-    if ( !pSess->fLocalSender && ( pSess->pszSpamTrap != NULL ) )
+    if ( ( (pSess->ulClentFlags & FL_LOCAL_CLIENT) == 0 ) &&
+         ( pSess->pszSpamTrap != NULL ) )
     {
       statChange( STAT_SPAM_TRAP, 1 );
 
@@ -1357,9 +1406,9 @@ static ULONG _sCheckOnDATA(PSESS pSess)
   }
 
 
-  if ( pSess->fLocalSender )
+  if ( (pSess->ulClentFlags & FL_LOCAL_SENDER) != 0 )
   {
-    if ( !pSess->fLocalClient )
+    if ( (pSess->ulClentFlags & FL_LOCAL_CLIENT) == 0 )
     {
       // Sender is local user and connected not from local network.
       for( ulIdx = 0; ulIdx < pSess->cRcpt; ulIdx++ )
@@ -1381,12 +1430,14 @@ static ULONG _sCheckOnDATA(PSESS pSess)
           break;
         }
       }
-    } // if ( pSess->fLocalSender )
+    } // if ( (pSess->ulClentFlags & FL_LOCAL_CLIENT) == 0 )
 
     // Do not other checks when sender is local user.
-  }
-  else if ( ( pSess->ulRWLLevel != 0 ) &&
-            ( pSess->ulRWLLevel < pConfig->ulCheckMailFromOnRWL ) )
+
+  } // if ( (pSess->ulClentFlags & FL_LOCAL_SENDER) != 0 )
+  else
+    if ( ( pSess->ulRWLLevel != 0 ) &&
+         ( pSess->ulRWLLevel < pConfig->ulCheckMailFromOnRWL ) )
   {
     // Don't check MAIL FROM when RWL result lower than the configured value.
     sessLog( pSess, 3, SESS_LOG_INFO, "RWL level is %u, it is less than "
@@ -1587,7 +1638,7 @@ static ULONG _sCheckOnAtContent(PSESS pSess, PMSGFILE pFile)
   PSZ                  pszAddr;
   CHAR                 acHostName[512];
 
-  if ( pSess->fRelay )
+  if ( (pSess->ulClentFlags & FL_RELAY) != 0 )
   {
     switch( pSess->lScore )
     {
@@ -1640,7 +1691,7 @@ static ULONG _sCheckOnAtContent(PSESS pSess, PMSGFILE pFile)
     mfScanBody( pFile, &stSpamURIHostList );
 
     ulCount = addrlstGetCount( &stSpamURIHostList ) - ulCount;
-    if ( !pSess->fLocalSender )
+    if ( (pSess->ulClentFlags & FL_LOCAL_CLIENT) == 0 )
     {
       sessAddScore( pSess, SF_SCORE_SPAM, "Found %u new spam URL host names",
                     ulCount );
@@ -1651,7 +1702,7 @@ static ULONG _sCheckOnAtContent(PSESS pSess, PMSGFILE pFile)
                ulCount );
   }
 
-  if ( pSess->fLocalSender )
+  if ( (pSess->ulClentFlags & FL_LOCAL_CLIENT) != 0 )
     return REQ_ANSWER_OK;
 
   if ( // Have "final" score - no need checks any more.

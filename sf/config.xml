@@ -249,6 +249,7 @@
       <addr score="spam">localhost 127.0.0.1 212.6.1.74</addr>
       <addr score="spam">User 192.168.0.0/16</addr>
       <addr score="50">[*.*.*.*]</addr>
+      <addr score="10">*.*.*.*</addr>
       <addr score="not-spam">*.os2world.net</addr>
       <addr score="25">*.eu</addr>
     </score-ehlo>
@@ -299,7 +300,7 @@
            and scored later on @ACCEPT. Applies only to not-local senders.
            <score-client> - score for those IPs.
            "ttl" - time interval an IP-addresses will be kept. -->
-      <score-client ttl="6 hours">25</score-client>
+      <score-client ttl="6 hours">40</score-client>
     </spamtrap>
 
     <!-- Score: not local client and local sender and local recipient. -->

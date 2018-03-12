@@ -53,6 +53,10 @@ NOTE: There is a bug in Weasel versions below 2.26 which causes program failure
 
 
 
+Donations are most welcome!
+https://www.arcanoae.com/shop/os2-ports-and-applications-by-andrey-vasilkin/
+PayPal: digi@os2.snc.ru
+
 Andrey Vasilkin, 2016
 E-mail: digi@os2.snc.ru
 Jabber: digi@frs.snc.ru

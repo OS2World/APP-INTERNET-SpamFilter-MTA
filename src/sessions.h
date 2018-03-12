@@ -30,13 +30,12 @@ typedef struct _SESS {
   ULONG                cRcpt;
   PSZ                  *ppszRcpt;
 
-  BOOL                 fLocalClient;
+  ULONG                ulClentFlags;
   LONG                 lScoreClient;
 
   LONG                 lScore;
   BOOL                 fRelay;
   LONG                 lScoreRelay;
-  BOOL                 fLocalSender;
   ULONG                ulRWLLevel;
   PSZ                  pszSpamTrap;
   ULONG                ulSPFLevel;
