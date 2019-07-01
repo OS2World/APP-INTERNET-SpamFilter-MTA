@@ -8,7 +8,8 @@
 #include "log.h"
 #include "datafile.h"
 #include "greylist.h"
-#include "debug.h"
+#include "hmem.h"
+#include "debug.h"     // Must be the last.
 
 #define GL_FILE        "GrLst.txt"
 #define GL_CFFILE      "GrLstCf.txt"
@@ -69,11 +70,11 @@ static VOID _ipCfChange(struct in_addr stInAddr, BOOL fIncr, time_t timeNow)
 
     if ( cIPCf == ulIPCfMax )
     {
-      PIPCF    paNewIPCf = debugReAlloc( paIPCf, sizeof(IPCF) * (cIPCf + 256) );
+      PIPCF    paNewIPCf = hrealloc( paIPCf, sizeof(IPCF) * (cIPCf + 256) );
 
       if ( paNewIPCf == NULL )
       {
-        debug( "Not enough memory" );
+        debugCP( "Not enough memory" );
         return;
       }
 
@@ -155,8 +156,8 @@ static BOOL _ipCfCheck(PSESS pSess)
 
 static VOID _freeGLItem(PGLITEM pItem)
 {
-  lnkseqFree( &pItem->lsRcpt, PGLRCPT, debugFree );
-  debugFree( pItem );
+  lnkseqFree( &pItem->lsRcpt, PGLRCPT, hfree );
+  hfree( pItem );
 }
 
 static PGLITEM _findItem(struct in_addr stInAddr, PSZ pszSender)
@@ -238,7 +239,7 @@ BOOL glInit()
               break;
             }
 
-            pItem = debugMAlloc( sizeof(GLITEM) + aParts[2].cbPart );
+            pItem = hmalloc( sizeof(GLITEM) + aParts[2].cbPart );
             if ( pItem != NULL )
             {
               lnkseqAdd( &lsGL, pItem );
@@ -252,7 +253,7 @@ BOOL glInit()
           case 'R':      // R time-expire found-counter recepient@address.dom
             if ( ( cParts == 4 ) && ( pItem != NULL ) )
             {
-              pRcpt = debugMAlloc( sizeof(GLRCPT) + aParts[3].cbPart );
+              pRcpt = hmalloc( sizeof(GLRCPT) + aParts[3].cbPart );
               if ( pRcpt == NULL )
                 break;
 
@@ -318,11 +319,11 @@ BOOL glInit()
         if ( cIPCf == ulIPCfMax )
         {
           // Expand coefficient list for next 128 records.
-          PIPCF    paNewIPCf = debugReAlloc( paIPCf,
+          PIPCF    paNewIPCf = hrealloc( paIPCf,
                                              sizeof(IPCF) * (cIPCf + 128) );
           if ( paNewIPCf == NULL )
           {
-            debug( "Not enough memory" );
+            debugCP( "Not enough memory" );
             break;
           }
           paIPCf = paNewIPCf;
@@ -362,7 +363,7 @@ VOID glDone()
   hmtxGL = NULLHANDLE;
 
   if ( paIPCf != NULL )
-    debugFree( paIPCf );
+    hfree( paIPCf );
   paIPCf = NULL;
   cIPCf = 0;
   ulIPCfMax = 0;
@@ -420,10 +421,10 @@ LONG glAdd(PSESS pSess)
   pItem = _findItem( stInAddr, pSess->pszSender );
   if ( pItem == NULL )
   {
-    pItem = debugMAlloc( sizeof(GLITEM) + STR_LEN( pSess->pszSender ) );
+    pItem = hmalloc( sizeof(GLITEM) + STR_LEN( pSess->pszSender ) );
     if ( pItem == NULL )
     {
-      debug( "Not enough memory" );
+      debugCP( "Not enough memory" );
       xplMutexUnlock( hmtxGL );
       return -1;
     }
@@ -445,10 +446,10 @@ LONG glAdd(PSESS pSess)
       pRcpt->cFound++;
     else
     {
-      pRcpt = debugMAlloc( sizeof(GLRCPT) + strlen( pszRcpt ) );
+      pRcpt = hmalloc( sizeof(GLRCPT) + strlen( pszRcpt ) );
       if ( pRcpt == NULL )
       {
-        debug( "Not enough memory" );
+        debugCP( "Not enough memory" );
         break;
       }
 
@@ -491,7 +492,7 @@ VOID glClean()
       {
         _ipCfChange( pItem->stInAddr, pRcpt->cFound != 0, timeNow );
         lnkseqRemove( &pItem->lsRcpt, pRcpt );
-        debugFree( pRcpt );
+        hfree( pRcpt );
       }
 
       pRcpt = pNextRcpt;

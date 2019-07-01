@@ -9,7 +9,8 @@
 #include "linkseq.h"
 #include "sockets.h"
 #include "dns.h"
-#include "debug.h"
+#include "hmem.h"
+#include "debug.h"     // Must be the last.
 
 #define MAX_SIMULTANEOUS_REQ    32
 #define NEGATIVE_ANSWER_TTL     60
@@ -105,7 +106,7 @@ static PDNSCACHEREC _cacheRecNew(USHORT usType, PSZ pszName, ULONG ulRCode,
 {
   PDNSCACHEREC         pRec;
 
-  pRec = debugCAlloc( 1, sizeof(DNSCACHEREC) + (sizeof(CRECITEM)*(cItems-1)) );
+  pRec = hcalloc( 1, sizeof(DNSCACHEREC) + (sizeof(CRECITEM)*(cItems-1)) );
   if ( pRec == NULL )
   {
     debug( "Not enough memory" );
@@ -113,7 +114,7 @@ static PDNSCACHEREC _cacheRecNew(USHORT usType, PSZ pszName, ULONG ulRCode,
   }
 
   pRec->usType = usType;
-  pRec->pszName = debugStrDup( pszName );
+  pRec->pszName = hstrdup( pszName );
   pRec->ulRCode = ulRCode;
   pRec->cItems = cItems;
   lnkseqAdd( &stCache, pRec );
@@ -135,12 +136,12 @@ static VOID _cacheRecFree(PDNSCACHEREC pRec)
   {
     for( ulIdx = 0; ulIdx < pRec->cItems; ulIdx++ )
       if ( pRec->aItems[ulIdx]._dns_id.pszName != NULL )
-        debugFree( pRec->aItems[ulIdx]._dns_id.pszName );
+        hfree( pRec->aItems[ulIdx]._dns_id.pszName );
   }
   
   if ( pRec->pszName != NULL )
-    debugFree( pRec->pszName );
-  debugFree( pRec );
+    hfree( pRec->pszName );
+  hfree( pRec );
 }
 
 // PDNSCACHEREC _cacheFind(USHORT usType, PSZ pszName)
@@ -169,7 +170,7 @@ static PDNSCACHEREC _cacheFind(USHORT usType, PSZ pszName)
       {
         pRec->cItems--;
         if ( pRec->usType != DNSREC_TYPE_A )
-          debugFree( pRec->aItems[ulIdx]._dns_id.pszName );
+          hfree( pRec->aItems[ulIdx]._dns_id.pszName );
         pRec->aItems[ulIdx] = pRec->aItems[pRec->cItems];
       }
       else
@@ -497,7 +498,7 @@ static PDNSCACHEREC _parseAnswer(ULONG cbDnsPkt, PDNSPKT pDnsPkt)
           continue;
         }
 
-        pRec->aItems[ulItemIdx].cri_pszName = debugStrDup( &acBuf );
+        pRec->aItems[ulItemIdx].cri_pszName = hstrdup( &acBuf );
         if ( pRec->aItems[ulItemIdx].cri_pszName == NULL )
         {
           debug( "Not enough memory" );
@@ -507,7 +508,7 @@ static PDNSCACHEREC _parseAnswer(ULONG cbDnsPkt, PDNSPKT pDnsPkt)
         break;
 
       case DNSREC_TYPE_TXT:
-        pRec->aItems[ulItemIdx].cri_pszName = debugMAlloc( *pcData + 1 );
+        pRec->aItems[ulItemIdx].cri_pszName = hmalloc( *pcData + 1 );
         if ( pRec->aItems[ulItemIdx].cri_pszName == NULL )
         {
           debug( "Not enough memory" );
@@ -528,7 +529,7 @@ static PDNSCACHEREC _parseAnswer(ULONG cbDnsPkt, PDNSPKT pDnsPkt)
         }
 
         pRec->aItems[ulItemIdx].cri_pMXName =
-          debugMAlloc( sizeof(MXNAME) + strlen( &acBuf ) );
+          hmalloc( sizeof(MXNAME) + strlen( &acBuf ) );
         if ( pRec->aItems[ulItemIdx].cri_pMXName == NULL )
         {
           debug( "Not enough memory" );

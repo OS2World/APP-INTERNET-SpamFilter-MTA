@@ -1,9 +1,9 @@
 
-                   Spam filter for OS/2 and eComStation.
+                Spam filter for OS/2, eComStation and ArcaOS.
 
 
-What it is.
------------
+What it is
+----------
 
 The SpamFilter is a free and Open Source software able to detect and reject
 e-mail messages containing unwanted advertising. SpamFilter is a multi-threaded
@@ -11,16 +11,16 @@ daemon and features local sockets and named pipes interfaces to receive
 queries and send answers to mail server software (MTA).
 
 
-What it is not.
----------------
+What it is not
+--------------
 
 This software does not support the "open relay" situations (MTA must be
 configured correctly) and do not perform anti-virus protection. SpamFilter is
 not SMTP proxy, it interacts with mail server software by using queries.
 
 
-How it works.
--------------
+How it works
+------------
 
 Each SMTP session on MTA should generate a series of queries to SpamFilter with
 a common identifier (session Id). Queries runs sequentially as clarification
@@ -111,8 +111,8 @@ On each stage the following steps are performed:
   greylist - see https://en.wikipedia.org/wiki/Greylisting
 
 
-Queries to spam filter.
------------------------
+Queries to spam filter
+----------------------
 
 Queries may be send via local socket or named pipe. Check configuration file
 config.xml for nodes <socket> and <pipe>. Queries are case-insensitive.
@@ -188,8 +188,8 @@ Some details may be specified after the colon and space. This may be a
 description of the error or something else.
 
 
-How to start.
--------------
+How to start
+------------
 
 Edit configuration file config.xml. At minimum, you must specify next options:
 
@@ -227,10 +227,13 @@ SF.EXE switches:
   -v             Verify configuration file and exit.
   -r <request>   Parse configuration file, then send query to running copy
                  and exit. It can be specified multiple times.
+  -R             Send queries specified by switch -r through a named pipe
+                 instead of a socket.",
+
   For example:
     sf.exe -r reconfigure
     sf.exe -r shutdown
-    sf.exe -r "session TEST @accept 192.168.1.2"
+    sf.exe -R -r "session TEST @accept 192.168.1.2"
 
 
 At this point you need to adjust interaction with your mail server software.
@@ -238,8 +241,8 @@ Read .\weasel\readme.txt to get information how to use SpamFilter with Weasel
 mail server.
 
 
-Filter tuning.
-------------------
+Filter tuning
+-------------
 
 The main source of information about filter's activity is its log file:
   <direcory where SF.EXE runned>\log\sf.log.
@@ -290,9 +293,8 @@ same way as for messages cathed by spamtrap from Internet.
 
 
 Donations are most welcome!
-https://www.arcanoae.com/shop/os2-ports-and-applications-by-andrey-vasilkin/
 PayPal: digi@os2.snc.ru
+Yandex.Money: 410017073387496
 
-Andrey Vasilkin, 2016
+Andrey Vasilkin, 2016-2019
 E-mail: digi@os2.snc.ru
-Jabber: digi@frs.snc.ru

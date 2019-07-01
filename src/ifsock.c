@@ -2,8 +2,9 @@
 #include "log.h"
 #include "requests.h"
 #include "linkseq.h"
-#include "debug.h"
 #include "ifsock.h"
+#include "hmem.h"
+#include "debug.h"     // Must be the last.
 
 #define THREAD_STACK_SIZE        65535
 
@@ -33,9 +34,9 @@ static VOID _closeClient(PCLIENT pClient)
   shutdown( pClient->hSocket, 2 );
   xplSockClose( pClient->hSocket );
   if ( pClient->pcRequest != NULL )
-    debugFree( pClient->pcRequest );
+    hfree( pClient->pcRequest );
 
-  debugFree( pClient );
+  hfree( pClient );
   debugDec( "ifsock_clients" );
 }
 
@@ -150,7 +151,7 @@ void threadSockets(void *pData)
 
       if ( pClient->cbRequest == pClient->ulReqMax )
       {
-        PCHAR          pcNewBuf = debugReAlloc( pClient->pcRequest,
+        PCHAR          pcNewBuf = hrealloc( pClient->pcRequest,
                                                 pClient->ulReqMax + 128 );
         if ( pcNewBuf == NULL )
         {
@@ -213,7 +214,7 @@ void threadSockets(void *pData)
         continue;
       }
 
-      pClient = debugCAlloc( 1, sizeof(CLIENT) );
+      pClient = hcalloc( 1, sizeof(CLIENT) );
       if ( pClient == NULL )
       {
         debug( "Not enough memory" );
@@ -241,6 +242,7 @@ BOOL ifsockInit()
 {
   struct sockaddr_un   stUn;
   int                  iVal = 1;
+  PSZ                  pszSocket;
 
   if ( hmtxClients != NULLHANDLE )
   {
@@ -261,8 +263,12 @@ BOOL ifsockInit()
 
   stUn.sun_len = sizeof(stUn);
   stUn.sun_family = AF_UNIX;
+
+  pszSocket = memicmp( pConfig->pszSocket, "\\socket\\", 8 ) == 0 ?
+                &pConfig->pszSocket[8] : pConfig->pszSocket;
+
   if ( _snprintf( stUn.sun_path, sizeof(stUn.sun_path), "\\socket\\%s",
-                  pConfig->pszSocket ) == -1 )
+                  pszSocket ) == -1 )
   {
     puts( "Socket name too long" );
     return FALSE;
@@ -274,8 +280,7 @@ BOOL ifsockInit()
     xplSockPError( "bind" );
 #endif
     if ( xplSockError() == SOCEADDRINUSE );
-      printf( "Socket %s already in use.\nAnother copy of the program is "
-              "already running.\n", &stUn.sun_path );
+      printf( "Socket %s already in use.\n", &stUn.sun_path );
     xplSockClose( hSocket );
     hSocket = -1;
     return FALSE;

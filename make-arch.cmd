@@ -16,16 +16,12 @@ rem Make archives of sources and binaries.
 
 rem First archive - sources.
 set fname=sf-src%archdate%.zip
-set srcdir=.\
-:pack
 echo Packing: %fname%.
 if exist %fname% del %fname%
-7za.exe a -tzip -mx7 -r0 -x!*.zip %fname% %srcdir% >nul
-
-rem Binaries was archived - exit.
-if %srcdir%==.\sf exit
+7za.exe a -tzip -mx7 -r0 -x!*.zip %fname% .\sf .\src clean.cmd make-arch.cmd >nul
 
 rem Compiling the project...
+set PUBLICBUILD=YES
 cd src
 wmake -h -s
 cd rxsf
@@ -34,5 +30,6 @@ cd ..\..
 
 rem Second archive - binaries.
 set fname=sf-bin%archdate%.zip
-set srcdir=.\sf
-goto pack
+echo Packing: %fname%.
+if exist %fname% del %fname%
+7za.exe a -tzip -mx7 -r0 -x!*.zip %fname% .\sf >nul

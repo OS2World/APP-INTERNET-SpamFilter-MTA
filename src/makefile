@@ -5,24 +5,29 @@
 BINPATH = ..\sf
 LIBPATH = .\lib
 EXENAME = sf
-VERSION = 1.1.3
+VERSION = 1.1.5
 AUTOR = Andrey Vasilkin
-COMMENT = SpamFilter for OS/2 and eComStation
-#DEBUG = 1
+COMMENT = SpamFilter
+
+# Uncomment next line to make debug version.
+#DEBUGCODE = YES
 
 EXEFILE = $(BINPATH)\$(EXENAME).exe
 
-CFLAGS = -i=.;$(%WATCOM)\H\OS2;$(%WATCOM)\H;.\h -bt=os2 -q -d0 -w2
+CFLAGS = -i=.;$(%WATCOM)\H\OS2;$(%WATCOM)\H;.\h -bt=os2 -q -d0 -w2 &
+         -DVERSION="$(VERSION)"
 
 SRCS = requests.c util.c dns.c config.c sessions.c log.c sockets.c &
-       spf.c addrlist.c greylist.c rwmutex.c sigqueue.c mboxchk.c msgfile.c &
+       spf.c addrlist.c greylist.c rwmutex.c events.c mboxchk.c msgfile.c &
        mcodec.c stat.c xmlutil.c ifsock.c ifpipe.c datafile.c sf.c &
-       weasel.c idfreq.c
+       piper.c idfreq.c hmem.c hmem_wraps.c
 
-!ifdef DEBUG
+!ifneq %PUBLICBUILD YES
+!ifdef DEBUGCODE
 CFLAGS += -DDEBUG_FILE="$(EXENAME).dbg"
 SRCS += debug.c
 COMMENT = $(COMMENT) (debug version)
+!endif
 !endif
 
 OBJS = $(SRCS:.c=.obj)
@@ -36,6 +41,7 @@ LIBS = os2iconv libuls libconv libxml2 zlib
 $(EXEFILE): infCompiling $(OBJS) $(EXENAME).lnk
   @echo * Link: $@
   @wlink @$(EXENAME).lnk
+  @lxlite $@
 
 $(EXENAME).lnk: .ALWAYS
   @%create $@
@@ -62,7 +68,6 @@ infCompiling: .SYMBOLIC
 clean: .SYMBOLIC
   @echo * Clean: $(EXENAME)
   @if exist *.obj @del *.obj
-  @if exist *.err @del *.err
   @if exist *.err @del *.err
   @if exist $(EXENAME).lnk @del $(EXENAME).lnk
   @if exist $(EXEFILE) @del $(EXEFILE)

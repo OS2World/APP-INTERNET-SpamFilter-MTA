@@ -3,7 +3,9 @@
 #include <sys/types.h> 
 #include <direct.h>
 #include "util.h"
-#include "debug.h"
+#include <stdio.h>
+#include "hmem.h"
+#include "debug.h"     // Must be the last.
 
 #include <stdio.h>
 
@@ -98,7 +100,7 @@ LONG utilStrWordIndex(PSZ pszList, ULONG cbWord, PCHAR pcWord)
 // _allocated_ memory.
 // Output: pcbText/ppcText - new length and new pointer to the realocated
 // memory for text.
-// The memory block pointed by *ppcText must be deallocated by debugFree().
+// The memory block pointed by *ppcText must be deallocated by hfree().
 //
 // If fnFilter is not a NULL it must return 0 - error, utilStrAddWords() will
 // immediately return FALSE, 1 - add word, other - do not add given word.
@@ -138,7 +140,7 @@ BOOL utilStrAddWords(PULONG pcbText, PCHAR *ppcText,
   // Allocate memory for the result text.
 
   ulSize += *pcbText;
-  pcText = debugReAlloc( *ppcText, ulSize );
+  pcText = hrealloc( *ppcText, ulSize );
   if ( pcText == NULL )
   {
     debug( "Not enough memory" );
@@ -183,7 +185,7 @@ BOOL utilStrAddWords(PULONG pcbText, PCHAR *ppcText,
     }
     else
     {
-      debugFree( *ppcText );
+      hfree( *ppcText );
       *ppcText = NULL;
       *pcbText = 0;
       return FALSE;
@@ -194,11 +196,11 @@ BOOL utilStrAddWords(PULONG pcbText, PCHAR *ppcText,
   {
     if ( ulSize == 0 )
     {
-      debugFree( *ppcText );
+      hfree( *ppcText );
       *ppcText = NULL;
     }
     else
-      *ppcText = debugReAlloc( *ppcText, ulSize );
+      *ppcText = hrealloc( *ppcText, ulSize );
     *pcbText = ulSize;
   }
 
@@ -308,7 +310,7 @@ PCHAR utilStrFindKey(ULONG cbText, PCHAR pcText, ULONG cbKey, PCHAR pcKey,
 // PSZ utilStrNewUnescapeQuotes(ULONG cbText, PCHAR pcText, BOOL fIfQuoted)
 //
 // Unescapes characters '\', '"' and returns pointer to the new string (you
-// must use debugFree() later). Leading and trailing quotas will not be
+// must use hfree() later). Leading and trailing quotas will not be
 // included in the result. When fIfQuoted is TRUE characters '\', '"' will be
 // unescaped only if first character in text is quota.
 
@@ -365,7 +367,7 @@ PSZ utilStrNewUnescapeQuotes(ULONG cbText, PCHAR pcText, BOOL fIfQuoted)
   if ( cbResult == 0 )
     return NULL;
 
-  pszResult = debugMAlloc( cbResult + 1 );
+  pszResult = hmalloc( cbResult + 1 );
   if ( pszResult == NULL )
     return NULL;
 
@@ -517,11 +519,14 @@ PSZ utilStrNewGetOption(ULONG cbText, PCHAR pcText, PSZ pszName)
   return utilStrNewUnescapeQuotes( cbVal, pcVal, TRUE );
 }
 
-BOOL utilStrToULong(ULONG cbStr, PCHAR pcStr, ULONG ulMin, ULONG ulMax,
+BOOL utilStrToULong(LONG cbStr, PCHAR pcStr, ULONG ulMin, ULONG ulMax,
                     PULONG pulValue)
 {
   ULONG      ulValue;
   ULONG      ulNew;
+
+  if ( cbStr < 0 )
+    cbStr = strlen( pcStr );
 
   BUF_SKIP_SPACES( cbStr, pcStr );
   BUF_RTRIM( cbStr, pcStr );
@@ -699,7 +704,7 @@ BOOL utilStrBuildParts(ULONG cbStr, PCHAR pcStr, PSZ pszDelimiter,
     return TRUE;
   }
 
-  pParts = debugMAlloc( ulFound * sizeof(UTILSTRPART) );
+  pParts = hmalloc( ulFound * sizeof(UTILSTRPART) );
   if ( pParts == NULL )
   {
     debug( "Not enough memory" );
@@ -744,7 +749,7 @@ BOOL utilStrBuildParts(ULONG cbStr, PCHAR pcStr, PSZ pszDelimiter,
       pPart++;
   }
 
-  debugFree( pParts );
+  hfree( pParts );
 
   *pcbBuf = cbRes;
   return fResult;
@@ -806,7 +811,7 @@ PSZ utilStrNewSZ(ULONG cbStr, PCHAR pcStr)
   if ( ( cbStr == 0 ) || ( pcStr == NULL ) )
     return NULL;
 
-  pszRes = debugMAlloc( cbStr + 1 );
+  pszRes = hmalloc( cbStr + 1 );
   if ( pszRes != NULL )
   {
     memcpy( pszRes, pcStr, cbStr );
@@ -1285,7 +1290,7 @@ BOOL utilIPListAddStr(PUTILIPLIST pIPList, ULONG cbList, PCHAR pcList,
   ULONG                cNewRec = utilStrWordsCount( cbList, pcList );
   ULONG                cbRec;
   PCHAR                pcRec;
-  PUTILIPLISTREC       paNewList = debugReAlloc( pIPList->paList,
+  PUTILIPLISTREC       paNewList = hrealloc( pIPList->paList,
                          sizeof(UTILIPLISTREC) * ( cNewRec + pIPList->ulCount ) );
   PUTILIPLISTREC       pIPRec;
   struct in_addr       stInAddrFirst, stInAddrLast;
@@ -1320,7 +1325,7 @@ BOOL utilIPListAddStr(PUTILIPLIST pIPList, ULONG cbList, PCHAR pcList,
   }
 
   // Rollback list.
-  pIPList->paList = debugReAlloc( pIPList->paList,
+  pIPList->paList = hrealloc( pIPList->paList,
                                   sizeof(UTILIPLISTREC) * pIPList->ulCount );
   return FALSE;
 }
@@ -1542,19 +1547,25 @@ BOOL utilVerifyDomainName(ULONG cbDomain, PCHAR pcDomain)
   return cbPart != 0;
 }
 
-// PCHAR utilEMailDomain(ULONG cbAddr, PCHAR pcAddr, PULONG pcbDomain)
+// PCHAR utilEMailDomain(LONG cbAddr, PCHAR pcAddr, PULONG pcbDomain)
 //
 // Returns pointer to the domain part of the e-mail address. Optionaly, writes
 // to pcbDomain lenght of the domain part (if pcbDomain is not a NULL).
 // Returns NULL if malformed address given, it can be used to verify e-mail
 // address.
 
-PCHAR utilEMailDomain(ULONG cbAddr, PCHAR pcAddr, PULONG pcbDomain)
+PCHAR utilEMailDomain(LONG cbAddr, PCHAR pcAddr, PULONG pcbDomain)
 {
   PCHAR      pcAt;
   ULONG      cbDomain;
 
-  if ( ( pcAddr == NULL ) || ( cbAddr < 5 ) )
+  if ( pcAddr == NULL )
+    return NULL;
+
+  if ( cbAddr < 0 )
+    cbAddr = strlen( pcAddr );
+
+  if ( cbAddr < 5 )
     return NULL;
 
   pcAt = memchr( pcAddr, '@', cbAddr );

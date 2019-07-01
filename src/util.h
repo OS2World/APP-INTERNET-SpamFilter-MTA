@@ -164,7 +164,7 @@ PSZ utilStrNewUnescapeQuotes(ULONG cbText, PCHAR pcText, BOOL fIfQuoted);
 PCHAR utilStrFindOption(ULONG cbText, PCHAR pcText,
                         ULONG cbName, PCHAR pcName, PULONG pcbVal);
 PSZ utilStrNewGetOption(ULONG cbText, PCHAR pcText, PSZ pszName);
-BOOL utilStrToULong(ULONG cbStr, PCHAR pcStr, ULONG ulMin, ULONG ulMax,
+BOOL utilStrToULong(LONG cbStr, PCHAR pcStr, ULONG ulMin, ULONG ulMax,
                     PULONG pulValue);
 BOOL utilStrToLong(ULONG cbStr, PCHAR pcStr, LONG lMin, LONG lMax,
                    PLONG plValue);
@@ -209,7 +209,7 @@ LONG utilSetExtension(ULONG cbBuf, PCHAR pcBuf, PSZ pszFile, PSZ pszExt);
 
 BOOL utilCIDRLenToInAddr(ULONG ulCIDRLen, struct in_addr *pInAddr);
 BOOL utilVerifyDomainName(ULONG cbDomain, PCHAR pcDomain);
-PCHAR utilEMailDomain(ULONG cbAddr, PCHAR pcAddr, PULONG pcbDomain);
+PCHAR utilEMailDomain(LONG cbAddr, PCHAR pcAddr, PULONG pcbDomain);
 BOOL utilIsMatch(ULONG cbStr, PCHAR pcStr, ULONG cbPtrn, PCHAR pcPtrn);
 BOOL utilBSearch(const void *pKey, PVOID pBase, ULONG ulNum, ULONG cbWidth,
                  int (*fnComp)(const void *pkey, const void *pbase),

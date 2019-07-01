@@ -5,9 +5,9 @@
 #include "log.h"
 #include "mcodec.h"
 #include "config.h"
-#include "debug.h"
+#include "hmem.h"
 #include "msgfile.h"
-
+#include "debug.h"     // Must be the last.
 
 #define _MF_FILE_END             0
 #define _MF_PART_DIV             1
@@ -34,9 +34,9 @@ struct _MFSCAN {
 static VOID _fieldFree(PMFFIELD pField)
 {
   if ( pField->pszValue != NULL )
-    debugFree( pField->pszValue );
+    hfree( pField->pszValue );
 
-  debugFree( pField );
+  hfree( pField );
 }
 
 static VOID _hdrFree(PLINKSEQ plsFields)
@@ -94,7 +94,7 @@ static BOOL _hdrRead(FILE *fd, PLINKSEQ plsFields)
       }
       *pcNameEnd = '\0';
 
-      pField = debugMAlloc( sizeof(MFFIELD) + strlen( &acBuf ) );
+      pField = hmalloc( sizeof(MFFIELD) + strlen( &acBuf ) );
       if ( pField == NULL )
       {
         debug( "Not enough memory" );
@@ -108,7 +108,7 @@ static BOOL _hdrRead(FILE *fd, PLINKSEQ plsFields)
     }
 
     cbValue = strlen( pcValue );
-    pszValue = debugReAlloc( pField->pszValue, pField->cbValue + cbValue + 1 );
+    pszValue = hrealloc( pField->pszValue, pField->cbValue + cbValue + 1 );
     if ( pszValue == NULL )
     {
       debug( "Not enough memory" );
@@ -235,7 +235,7 @@ static ULONG _scanPart(struct _MFSCAN *pScan, PLINKSEQ plsFields,
           _hdrFree( &lsFields );
         }
 
-        debugFree( pcLocBndr );
+        hfree( pcLocBndr );
         if ( ulRC != _MF_PART_END )
           return ulRC; // EOF
 
@@ -278,7 +278,7 @@ static ULONG _scanPart(struct _MFSCAN *pScan, PLINKSEQ plsFields,
     {
       // Read and decode part body.
 
-      PCHAR  pcTDecBuf = debugMAlloc( pConfig->ulMaxBodyPart );
+      PCHAR  pcTDecBuf = hmalloc( pConfig->ulMaxBodyPart );
              // ^^^ Memory block for the decoded content.
       PCHAR  pcTDecPos;
       ULONG  ulTDecLeft;
@@ -310,7 +310,7 @@ static ULONG _scanPart(struct _MFSCAN *pScan, PLINKSEQ plsFields,
 
         utilStrFindURIHosts( pcTDecPos - pcTDecBuf, pcTDecBuf,
                              _fnHostStore, (PVOID)pScan->pAddrList );
-        debugFree( pcTDecBuf );
+        hfree( pcTDecBuf );
       }
 
       // Part is readed.
@@ -335,7 +335,7 @@ static ULONG _scanPart(struct _MFSCAN *pScan, PLINKSEQ plsFields,
 
 PMSGFILE mfOpen(PSZ pszFile)
 {
-  PMSGFILE   pFile = debugMAlloc( sizeof(MSGFILE) );
+  PMSGFILE   pFile = hmalloc( sizeof(MSGFILE) );
 
   if ( pFile == NULL )
   {
@@ -346,7 +346,7 @@ PMSGFILE mfOpen(PSZ pszFile)
   pFile->fd = fopen( pszFile, "r" );
   if ( pFile->fd == NULL )
   {
-    debugFree( pFile );
+    hfree( pFile );
     debug( "Cannot open file: %s", pszFile );
     return NULL;
   } 
@@ -355,7 +355,7 @@ PMSGFILE mfOpen(PSZ pszFile)
   if ( !_hdrRead( pFile->fd, &pFile->lsFields ) )
   {
     fclose( pFile->fd );
-    debugFree( pFile );
+    hfree( pFile );
     return NULL;
   } 
   pFile->ulBodyStart = ftell( pFile->fd );
@@ -367,14 +367,14 @@ VOID mfClose(PMSGFILE pFile)
 {
   fclose( pFile->fd );
   _hdrFree( &pFile->lsFields );
-  debugFree( pFile );
+  hfree( pFile );
 }
 
 VOID mfSetHeader(PMSGFILE pFile, PSZ pszField, PSZ pszValue)
 {
 #define _MAX_LINE      77
   ULONG                cbField = strlen( pszField );
-  PMFFIELD             pField = debugMAlloc( sizeof(MFFIELD) + cbField );
+  PMFFIELD             pField = hmalloc( sizeof(MFFIELD) + cbField );
   ULONG                ulLineLeft = _MAX_LINE - cbField - 1; // -1 - ':'
   ULONG                cbItem, ulAddLen;
   PCHAR                pcItemEnd;
@@ -410,7 +410,7 @@ VOID mfSetHeader(PMSGFILE pFile, PSZ pszField, PSZ pszValue)
       }
     }
 
-    pszNewVal = debugReAlloc( pField->pszValue, pField->cbValue + ulAddLen + 1 );
+    pszNewVal = hrealloc( pField->pszValue, pField->cbValue + ulAddLen + 1 );
     if ( pszNewVal == NULL )
     {
       debug( "Not enough memory" );
@@ -449,7 +449,7 @@ VOID mfScanBody(PMSGFILE pFile, PADDRLIST pList)
 
   stScan.pAddrList = pList;
   stScan.fd = pFile->fd;
-  stScan.acBuf[ _MF_LINE_BUF_SIZE - 1 ] = '\0';
+  stScan.acBuf[_MF_LINE_BUF_SIZE - 1] = '\0';
 
   fseek( pFile->fd, pFile->ulBodyStart, SEEK_SET ); 
   _scanPart( &stScan, &pFile->lsFields, 0, NULL );

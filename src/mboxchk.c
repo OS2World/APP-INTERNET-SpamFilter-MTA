@@ -1,13 +1,14 @@
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h>
-#include "debug.h"
 #include "xpl.h"
 #include "util.h"
 #include "sockets.h"
 #include "config.h"
+#include "hmem.h"
 #define MBOXCHK_C
 #include "mboxchk.h"
+#include "debug.h"     // Must be the last.
 
 PSZ apszMBCResult[10] = {
   "Exist",                                 // MBC_OK
@@ -42,7 +43,7 @@ static BOOL _dynbufInit(PDYNBUF pDynBuf, ULONG ulSize)
 {
   pDynBuf->ulFill = 0;
   pDynBuf->ulSize = ulSize;
-  pDynBuf->pcData = debugMAlloc( ulSize );
+  pDynBuf->pcData = hmalloc( ulSize );
   pDynBuf->ulReadPos = 0;
 
   return pDynBuf->pcData != NULL;
@@ -51,12 +52,12 @@ static BOOL _dynbufInit(PDYNBUF pDynBuf, ULONG ulSize)
 static VOID _dynbufDone(PDYNBUF pDynBuf)
 {
   if ( pDynBuf->pcData != NULL )
-    debugFree( pDynBuf->pcData );
+    hfree( pDynBuf->pcData );
 }
 
 static BOOL _dynbufExpand(PDYNBUF pDynBuf, ULONG ulSize)
 {
-  PCHAR      pcData = debugReAlloc( pDynBuf->pcData, pDynBuf->ulSize + ulSize );
+  PCHAR      pcData = hrealloc( pDynBuf->pcData, pDynBuf->ulSize + ulSize );
 
   if ( pcData == NULL )
     return FALSE;
@@ -113,12 +114,12 @@ static ULONG _readSMTPResp(int iSock, PDYNBUF pDynBuf)
       debug( "recv() failed, error %u", xplSockError() );
       return 0;
     }
-debug( "Received: \"%s\"", debugBufPSZ( _dynbufWritePtr( pDynBuf ), cBytes ) );
+//debug( "Received: \"%s\"", debugBufPSZ( _dynbufWritePtr( pDynBuf ), cBytes ) );
     _dynbufMovePtr( pDynBuf, cBytes );
 
     while( ( pcLine = _dynbufReadLine( pDynBuf, &cbLine ) ) != NULL )
     {
-debug( "Line: \"%s\"", debugBufPSZ( pcLine, cbLine ) );
+//debug( "Line: \"%s\"", debugBufPSZ( pcLine, cbLine ) );
       if ( ( cbLine < 3 ) ||
            ( cbLine > 3 && pcLine[3] != ' ' && pcLine[3] != '-' ) ||
            !isdigit( pcLine[0] ) || !isdigit( pcLine[1] ) ||
@@ -149,7 +150,7 @@ static ULONG _sendSMTPCmd(int iSock, PDYNBUF pDynBuf, PSZ pszMsg)
 {
   ULONG      ulRC;
 
-debug( "Send: %s", pszMsg );
+//debug( "Send: %s", pszMsg );
   if ( send( iSock, pszMsg, strlen( pszMsg ), 0 ) == -1 )
   {
     debug( "send() failed" );
@@ -282,12 +283,14 @@ static ULONG _connect(struct in_addr stServer, USHORT usPort, ULONG ulTimeout,
 // Check mail box pszMailAddr on the SMTP server stServer.
 // Returns MBC_xxxxx error code.
 
-ULONG MailBoxCheck(struct in_addr stServer, PSZ pszMailAddr)
+ULONG MailBoxCheck(struct in_addr stServer, USHORT usPort, PSZ pszMailAddr,
+                   BOOL fFullCheck)
 {
   int                  iSock;
   CHAR                 acBuf[264];
   struct timeval       stTimeVal;
-  ULONG                ulRC = _connect( stServer, 25, 3, &iSock );
+  ULONG                ulRC = _connect( stServer, (usPort == 0 ? 25 : usPort),
+                                        3, &iSock );
   DYNBUF               stDynBuf;
 
   if ( ulRC != MBC_OK )
@@ -324,6 +327,8 @@ ULONG MailBoxCheck(struct in_addr stServer, PSZ pszMailAddr)
 
     if ( ulRC != 250 )
       ulRC = MBC_DONE_NOT_EXIST;
+    else if ( !fFullCheck )
+      ulRC = MBC_OK;
     else
     {
       PCHAR            pcAt = strchr( pszMailAddr, '@' );
@@ -333,10 +338,11 @@ ULONG MailBoxCheck(struct in_addr stServer, PSZ pszMailAddr)
         debug( "Invalid e-mail address: %s", pszMailAddr );
         ulRC = MBC_FAIL;
       }
-      else
+      else 
       {
         _bprintf( &acBuf[9], sizeof(acBuf) - 9, "postmaster%s>\r\n", pcAt );
-        if ( _sendSMTPCmd( iSock, &stDynBuf, &acBuf ) != 250 )
+        if ( ( memcmp( pszMailAddr, "postmaster@", 11 ) != 0 ) &&
+             ( _sendSMTPCmd( iSock, &stDynBuf, &acBuf ) != 250 ) )
           ulRC = MBC_DONE_NO_POSTMASTER;
         else
         {

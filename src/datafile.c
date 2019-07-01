@@ -1,14 +1,15 @@
 #include <string.h>
 #include <stdio.h>
-#include "debug.h"
 #include "config.h"
 #include "linkseq.h"
 #include "log.h"
 #include "util.h"
 #include "datafile.h"
+#include "hmem.h"
+#include "debug.h"     // Must be the last.
 
 typedef struct _DFPPTASK {
-  SEQOBJ               seqObj;
+  SEQOBJ     seqObj;
 
   PSZ        pszSrc;
   PSZ        pszBakupExt;
@@ -25,13 +26,13 @@ static VOID _taskFree(PDFPPTASK pTask)
   if ( pTask->pszSrc != NULL )
   {
     unlink( pTask->pszSrc );
-    debugFree( pTask->pszSrc );
+    hfree( pTask->pszSrc );
   }
 
   if ( pTask->pszBakupExt != NULL )
-    debugFree( pTask->pszBakupExt );
+    hfree( pTask->pszBakupExt );
 
-  debugFree( pTask );
+  hfree( pTask );
 }
 
 static ULONG _backupFileReplace(PSZ pszDest, PSZ pszSrc, PSZ pszBakupExt)
@@ -239,7 +240,7 @@ LONG dfSetUniqueExtension(ULONG cbBuf, PCHAR pcBuf, PSZ pszFile)
 // 1. Get unique filename from dfSetUniqueExtension():
 //      D:\dir\MYFILE.EXT -> D:\dir\MYFILE.nnn
 // 2. Create file MYFILE.nnn, store data and close file.
-// 3. utilBackupFileReplace("D:\dir\MYFILE.EXT","D:\dir\MYFILE.nnn","BKP",?).
+// 3. dfBackupFileReplace("D:\dir\MYFILE.EXT","D:\dir\MYFILE.nnn","BKP",?).
 
 BOOL dfBackupFileReplace(PSZ pszDest, PSZ pszSrc, PSZ pszBakupExt,
                          BOOL fPostpondAllowed)
@@ -274,17 +275,17 @@ BOOL dfBackupFileReplace(PSZ pszDest, PSZ pszSrc, PSZ pszBakupExt,
 
       // Put the task to the queue.
 
-      pTask = debugMAlloc( sizeof(DFPPTASK) + strlen( pszDest ) );
+      pTask = hmalloc( sizeof(DFPPTASK) + strlen( pszDest ) );
       if ( pTask == NULL )
         break;
 
-      pTask->pszSrc = debugStrDup( pszSrc );
+      pTask->pszSrc = hstrdup( pszSrc );
       if ( pTask->pszSrc == NULL )
       {
-        debugFree( pTask );
+        hfree( pTask );
         break;
       }
-      pTask->pszBakupExt = pszBakupExt == NULL ? NULL : debugStrDup( pszBakupExt );
+      pTask->pszBakupExt = pszBakupExt == NULL ? NULL : hstrdup( pszBakupExt );
       strcpy( &pTask->szDest, pszDest );
       lnkseqAdd( &lsPPTasks, pTask );
       fRes = TRUE;

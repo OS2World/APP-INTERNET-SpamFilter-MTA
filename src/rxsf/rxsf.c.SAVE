@@ -4,65 +4,43 @@
 #define INCL_RXFUNC               /* include external function  info */
 #define INCL_REXXSAA
 #include <os2.h>
-#ifdef __WATCOMC__
 #include <rexxsaa.h>
-#endif
-#include <ctype.h>
-#include <nerrno.h>
 #include <stdio.h>
 #include <string.h>
 #include <types.h>
 #include <sys\socket.h>
 #include <unistd.h>
 #include <sys\un.h>
-//#include <util.h>
+#include <util.h>
 #include <debug.h>
 
 #define INVALID_ROUTINE		40           /* Raise Rexx error           */
 #define VALID_ROUTINE		0            /* Successful completion      */
 
 #define BUILDRXSTRING(t, s) { \
-  strcpy((PCHAR)(t)->strptr,(PCHAR)(s));\
-  (t)->strlength = strlen((PCHAR)(s)); \
+  strcpy((t)->strptr,(s));\
+  (t)->strlength = strlen((s)); \
 }
 
-ULONG APIENTRY rxsfLoadFuncs(PUCHAR puchName, ULONG cArgs, RXSTRING aArgs[],
-                    PSZ pszQueue, RXSTRING *prxstrRet);
-ULONG APIENTRY rxsfDropFuncs(PUCHAR puchName, ULONG cArgs, RXSTRING aArgs[],
-                    PSZ pszQueue, RXSTRING *prxstrRet);
-ULONG APIENTRY rxsfOpen(PUCHAR puchName, ULONG cArgs, RXSTRING aArgs[],
-               PSZ pszQueue, RXSTRING *prxstrRet);
-ULONG APIENTRY rxsfClose(PUCHAR puchName, ULONG cArgs, RXSTRING aArgs[],
-                              PSZ pszQueue, RXSTRING *prxstrRet);
-ULONG APIENTRY rxsfSend(PUCHAR puchName, ULONG cArgs, RXSTRING aArgs[],
-                             PSZ pszQueue, RXSTRING *prxstrRet);
-ULONG APIENTRY rxsfRecv(PUCHAR puchName, ULONG cArgs, RXSTRING aArgs[],
-                             PSZ pszQueue, RXSTRING *prxstrRet);
-ULONG APIENTRY rxsfRequest(PUCHAR puchName, ULONG cArgs, RXSTRING aArgs[],
-                                PSZ pszQueue, RXSTRING *prxstrRet);
+RexxFunctionHandler rxsfLoadFuncs;
+RexxFunctionHandler rxsfDropFuncs;
+RexxFunctionHandler rxsfOpen;
+RexxFunctionHandler rxsfClose;
+RexxFunctionHandler rxsfSend;
+RexxFunctionHandler rxsfRecv;
+RexxFunctionHandler rxsfRequest;
 
 static PSZ RxFncTable[] =
 {
-  (PSZ)"rxsfLoadFuncs",
-  (PSZ)"rxsfDropFuncs",
-  (PSZ)"rxsfOpen",
-  (PSZ)"rxsfClose",
-  (PSZ)"rxsfSend",
-  (PSZ)"rxsfRecv",
-  (PSZ)"rxsfRequest"
+  "rxsfLoadFuncs",
+  "rxsfDropFuncs",
+  "rxsfOpen",
+  "rxsfClose",
+  "rxsfSend",
+  "rxsfRecv",
+  "rxsfRequest"
 };
 
-
-#define ARRAY_SIZE(a) ( sizeof(a) / sizeof(a[0]) )
-
-#define BUF_SKIP_SPACES(cb, pc) \
-  while( (cb > 0) && isspace( *pc ) ) { cb--; pc++; }
-
-#define BUF_MOVE_TO_SPACE(cb, pc) \
-  while( (cb > 0) && !isspace( *pc ) ) { cb--; pc++; }
-
-#define BUF_RTRIM(cb, pc) \
-  while( (cb > 0) && ( isspace( pc[cb - 1] ) ) ) cb--
 
 // utilStrCutWord(PULONG pcbText, PCHAR *ppcText,
 //                PULONG pcbWord, PCHAR *ppcWord)
@@ -139,16 +117,16 @@ static BOOL _rxstrtoi(RXSTRING rxsValue, int *piValue)
   if ( !RXVALIDSTRING( rxsValue ) )
     return FALSE;
 
-  *piValue = (int)strtol( (PCHAR)pszValue, &pcEnd, 10 );
+  *piValue = (int)strtol( pszValue, &pcEnd, 10 );
 
-  return ( (PSZ)pcEnd != pszValue ) && ( errno == 0 );
+  return ( pcEnd != pszValue ) && ( errno == 0 );
 }
 
 static BOOL _setRxValue(PSZ pszName, ULONG cbValue, PCHAR pcValue)
 {
   SHVBLOCK	sBlock;
 
-  strupr( (PCHAR)pszName );
+  strupr( pszName );
 
   sBlock.shvnext = NULL;
   MAKERXSTRING( sBlock.shvname, pszName, strlen( pszName ) );
@@ -170,7 +148,7 @@ static int _connOpen(PSZ pszSocket)
   stUn.sun_path[sizeof(stUn.sun_path) - 1] = '\0';
   _snprintf( stUn.sun_path, sizeof(stUn.sun_path) - 1, "\\socket\\%s",
              ( pszSocket == NULL || *pszSocket == '\0' )
-                ? (PSZ)"SPAMFILTER" : pszSocket );
+                ? "SPAMFILTER" : pszSocket );
   stUn.sun_len = sizeof(stUn);
   stUn.sun_family = AF_UNIX;
 
@@ -219,7 +197,7 @@ ULONG rxsfDropFuncs(PUCHAR puchName, ULONG cArgs, RXSTRING aArgs[],
   if ( cArgs > 0 )
     return INVALID_ROUTINE;
  
-  for( ulIdx = 0; ulIdx < ARRAY_SIZE(RxFncTable); ulIdx++ )
+  for( ulIdx = 0; ulIdx < sizeof(RxFncTable)/sizeof(PSZ); ulIdx++ )
     RexxDeregisterFunction( RxFncTable[ulIdx] );
 
   debug( "Done. Allocated memory: %d", debugMemUsed() );
@@ -238,8 +216,7 @@ ULONG rxsfOpen(PUCHAR puchName, ULONG cArgs, RXSTRING aArgs[],
 {
   CHAR                 acBuf[16];
 
-  ltoa( _connOpen( cArgs == 0 ? NULL : RXSTRPTR( aArgs[0] ) ),
-        (PSZ)&acBuf, 10 );
+  ltoa( _connOpen( cArgs == 0 ? NULL : RXSTRPTR( aArgs[0] ) ), &acBuf, 10 );
   BUILDRXSTRING( prxstrRet, &acBuf );
 
   return VALID_ROUTINE;
@@ -395,33 +372,25 @@ ULONG rxsfRecv(PUCHAR puchName, ULONG cArgs, RXSTRING aArgs[],
   return VALID_ROUTINE;
 }
 
-// answer = rxsfRequest( [socket], request[, stem] )
+// answer = rxsfRequest( [socket], request )
 //
 // Sends request to the program and returns an answer. Socket may be a handle
 // open by rxsfOpen() or local IPC socket name witout leading "\socket\".
 // By default socket is "SPAMFILTER".
-// If stem name is specified function will try to read POP3-like responce:
-//   +OK text
-//   data line 1
-//   data line 2
-//   .
-// "+OK text" - will be returned as func. result, "data line 1" -> stem.1,
-// "data line 2" -> stem.2 and stem.0 is number of lines - 2.
 
 ULONG rxsfRequest(PUCHAR puchName, ULONG cArgs, RXSTRING aArgs[],
                   PSZ pszQueue, RXSTRING *prxstrRet)
 {
   int        iSocket;
+  int        iFlags = 0;
   PCHAR      pcBuf = NULL;
   int        iRC;
+  BOOL       fSuccess;
   ULONG      cbRequest;
   PCHAR      pcRequest;
   BOOL       fNewConn = FALSE;
-  CHAR       acName[256];
-  ULONG      ulStemN = 0;
 
-  if ( ( ( cArgs < 2 ) || ( cArgs > 3 ) || !RXVALIDSTRING( aArgs[1] ) ) ||
-       ( ( cArgs == 3 ) && !RXVALIDSTRING( aArgs[2] ) ) )
+  if ( ( cArgs != 2 ) || !RXVALIDSTRING( aArgs[1] ) )
     return INVALID_ROUTINE;
 
   pcRequest = aArgs[1].strptr;
@@ -430,18 +399,11 @@ ULONG rxsfRequest(PUCHAR puchName, ULONG cArgs, RXSTRING aArgs[],
   // Add CRLF if this is not present in a given string.
 
   if ( ( cbRequest < 2 ) ||
-       ( *((PUSHORT)&pcRequest[ cbRequest - 2 ]) != 0x0A0D ) )
+       ( *((PUSHORT)&pcRequest[ cbRequest - 2 ]) != (USHORT)'\n\r' ) )
   {
-    pcBuf = malloc( cbRequest + 4 );
-    if ( pcBuf == NULL )
-    {
-      BUILDRXSTRING( prxstrRet, "ERROR: Not enough memory" );
-      if ( pcBuf != NULL )
-        free( pcBuf );
-      return VALID_ROUTINE;
-    }
+    pcBuf = debugMAlloc( cbRequest + 4 );
     memcpy( pcBuf, pcRequest, cbRequest );
-    *((PULONG)&pcBuf[cbRequest]) = 0x000A0D;
+    *((PULONG)&pcBuf[cbRequest]) = (ULONG)'\0\0\n\r';
 
     pcRequest = pcBuf;
     cbRequest += 2;
@@ -449,7 +411,8 @@ ULONG rxsfRequest(PUCHAR puchName, ULONG cArgs, RXSTRING aArgs[],
 
   do
   {
-    // If 1st argument (socket) is numerical - try send use this socket handle.
+    // First argument (socket) is numerical - try send use this socket handle.
+
     if ( _rxstrtoi( aArgs[0], &iSocket ) )
     {
       iRC = send( iSocket, pcRequest, cbRequest, 0 );
@@ -459,24 +422,26 @@ ULONG rxsfRequest(PUCHAR puchName, ULONG cArgs, RXSTRING aArgs[],
 
     // First argument is not a socket or string - try open socket using first
     // argument as the name.
+
     iSocket = _connOpen( RXSTRPTR( aArgs[0] ) );
     if ( iSocket == -1 )
     {
       BUILDRXSTRING( prxstrRet, "ERROR: Cannot connect to the program" );
       if ( pcBuf != NULL )
-        free( pcBuf );
+        debugFree( pcBuf );
       return VALID_ROUTINE;
     }
     fNewConn = TRUE;
 
     // Connection was open - send data.
+
     iRC = send( iSocket, pcRequest, cbRequest, 0 );
   }
   while( FALSE );
 
   // Destroy temporary buffer (used for trailing CRLF).
   if ( pcBuf != NULL )
-    free( pcBuf );
+    debugFree( pcBuf );
 
   if ( iRC == -1 )
   {
@@ -484,122 +449,24 @@ ULONG rxsfRequest(PUCHAR puchName, ULONG cArgs, RXSTRING aArgs[],
   }
   else
   {
-    // Read server responce.
+    // Read answer.
 
-    PCHAR    pcLine, pcEOL, pcNextLine;
-    ULONG    cbLine, cbBuf = 0;
-    CHAR     acName[256];
-    BOOL     fBody = FALSE;
-
-    // Allocate receive buffer.
-    pcBuf = malloc( 65535 );
-    if ( pcBuf == NULL )
+    iRC = recv( iSocket, prxstrRet->strptr, 65535, 0 );
+    if ( iRC == -1 )
     {
-      BUILDRXSTRING( prxstrRet, "ERROR: Not enough memory" );
-      if ( fNewConn )
-        _connClose( iSocket );
-      return VALID_ROUTINE;
+      BUILDRXSTRING( prxstrRet, "ERROR: Cannot get an answer from the program" );
     }
-
-    prxstrRet->strlength = 0;
-    while( TRUE )
+    else
     {
-      // Receive a new chunk of responce.
-      iRC = recv( iSocket, &pcBuf[cbBuf], 65535 - cbBuf, 0 );
-      if ( iRC <= 0 )
-        break;
+      // Remove all trailing CRs, LFs, TABs and SPACEs from the answer.
 
-      // Split received chunk on lines.
-
-      cbBuf += iRC;
-      pcLine = pcBuf;
-      while( ( pcEOL = memchr( pcLine, '\n', cbBuf ) ) != NULL )
-      {
-        pcNextLine = pcEOL + 1;
-
-        while( ( pcEOL > pcLine ) && isspace( *(pcEOL - 1) ) )
-          pcEOL--;
-
-        cbLine = pcEOL - pcLine;
-        if ( !fBody )
-        {
-          // First line of the responce is "result" - it will be returned
-          // as function result.
-
-          prxstrRet->strlength = cbLine;
-          memcpy( prxstrRet->strptr, pcLine, cbLine );
-          if ( ( cArgs < 3 ) || ( memcmp( pcLine, "+OK ", 4 ) != 0 ) )
-          {
-            // User don't whant responce "body" or result is not "+OK ..."
-            iRC = 0;
-            break;
-          }
-          fBody = TRUE;
-        }
-        else
-        {
-          // Next lines after result "+OK ..." is a responce "body".
-
-          PCHAR        pcRespLine;
-
-          if ( ( cbLine >= 1 ) && ( *pcLine == '.' ) )
-          {
-            if ( cbLine == 1 )
-            {
-              // A dot is an end of body.
-              iRC = 0;
-              break;
-            }
-            // First character is dot - remove it.
-            pcRespLine = &pcLine[1];
-            cbLine--;
-          }
-          else
-            pcRespLine = pcLine;
-
-          ulStemN++;
-          sprintf( acName,
-                   aArgs[2].strptr[aArgs[2].strlength-1] == '.'
-                     ? "%s%lu" : "%s.%lu",
-                   RXSTRPTR( aArgs[2] ), ulStemN );
-          _setRxValue( (PSZ)acName, cbLine, pcRespLine );
-        }
-
-        cbBuf -= ( pcNextLine - pcLine );
-        pcLine = pcNextLine;
-      }
-
-      if ( iRC <= 0 )
-        // Rend of responce.
-        break;
-
-      // Move left bytes to the beginning of the buffer.
-      if ( pcLine != pcBuf )
-        memcpy( pcBuf, pcLine, cbBuf );
-      else if ( cbBuf == 65535 )
-      {
-        debugCP( "Received line is too long" );
-        break;
-      }
+      BUF_RTRIM( iRC, prxstrRet->strptr );
+      prxstrRet->strlength = iRC;
     }
-
-    free( pcBuf );
   }
 
   if ( fNewConn )
     _connClose( iSocket );
-
-  if ( cArgs >= 3 )
-  {
-    // stem.0 - number of body lines (stem is 3th argument).
-    CHAR     acVal[32];
-
-    sprintf( acName,
-             aArgs[2].strptr[aArgs[2].strlength-1] == '.'
-               ? "%s0" : "%s.0",
-             RXSTRPTR( aArgs[2] ) );
-    _setRxValue( (PSZ)acName, sprintf( acVal, "%lu", ulStemN ), acVal );
-  }
 
   return VALID_ROUTINE;
 }

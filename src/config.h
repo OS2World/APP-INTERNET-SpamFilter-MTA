@@ -35,10 +35,24 @@ typedef struct _CONFIG {
   PSZ                  pszPipe;            // Max. length is 253.
   ULONG                ulPipes;
   ULONG                ulThreads;
+
+  // Weasel log pipe
   BOOL                 fWeaselLogPipe;     // Read weasel pipe to close sess/s.
   BOOL                 fWeaselLogToScreen; // Output Weasel log to the screen.
+  PSZ                  pcWeaselLogPipes;   // (Alternative) log named pipes.
+  PSZ                  pszServerLogPipe;   // Server named pipe (redirect log).
+  ULONG                ulServerLogPipes;   // Number of server named pipes.
+  ULONG                ulAuthFailFreqMax;
+    // Maximum frequency of "Authentication failed" messages per IP-address.
+  ULONG                ulAuthFailFreqDuration;
+    // Maximum frequency of "Authentication failed" messages per IP-address duration.
+  ULONG                ulAuthFailFreqExpiration;
+    // Expiration for "Authentication failed" blocked IP-address.
+
   struct in_addr       stNSAddr;           // DNS server address.
   USHORT               usNSPort;           // DNS server port.
+  struct in_addr       stMXAddr;           // Our mail server address.
+  USHORT               usMXPort;           // Our mail server port.
   PSZ                  pszMailServerName;
     // Our mail server hostname. Maximum length is 255 characters (+ zero).
   ULONG                cbLocalDomains;
@@ -137,9 +151,20 @@ typedef struct _CONFIG {
   ULONG                ulSpamTrapClientTTL;   // Seconds, >=0.
     // Time to live client IP-address in internal ip list.
     // IP-address will not be listed if 0 specified.
+  LONG                 lScoreNonexistentLocSndr;
+    // Score: Nonexistent local sender and local recepient, sender connected
+    // not from the local network.
+    // extclnt-locsender-locrcpt/nonexistent-locsender/score
+  LONG                 lScoreClientNonexistentLocSndr;
+    // extclnt-locsender-locrcpt/nonexistent-locsender/score-client
+  ULONG                ulExpirationClientNonexistentLocSndr;
+    // Dynamic score IP list address time expiration for address to which
+    // lScoreExtClntNonexistentLocSndrLocRcpt has been applied.
+    // extclnt-locsender-locrcpt/nonexistent-locsender/score-client@expiration
   LONG                 lScoreExtClntLocSndrLocRcpt;
     // Score: Local sender and local recepient but sender connected not from
-    // the local network.
+    // the local network ( extclnt-locsender-locrcpt/score ).
+    // extclnt-locsender-locrcpt/score
   ULONG                ulCheckMailFromOnRWL;
     // Do not check MAIL FROM (DNSBL, URIBL, mail box, SPF, Graylist) when RWL
     // result lower (more reliable) than this value:

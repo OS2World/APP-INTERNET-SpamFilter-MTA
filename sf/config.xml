@@ -58,16 +58,17 @@
 
   <!-- Named pipe on which SpamFilter will receive requests.
        Name of named pipe will be \PIPE\xxxx, where xxxx is value of <pipe>.
-       Attribute "number" (1..25) specifies how many instances of the pipe will
-       be created. No pipes will be created if this node is not specified.
+       Attribute "number" (1..100) specifies how many instances of the pipe
+       will be created. No pipes will be created if this node is not specified.
        Changing this field requires restarting SF before changes take effect.
        -->
-  <pipe number="10">SPAMFILTER</pipe>
+  <pipe number="5">SPAMFILTER</pipe>
 
   <!-- How many threads will be handling incoming requests (1..100). -->
   <threads>10</threads>
 
-  <!-- Listen the piped output from Weasel to catch session close events.
+  <!-- Listen the piped output from Weasel to catch session close and failed
+       authentication events.
        When using Weasel is not possible to know when the SMTP session is
        closed. You may enable this option to get information through the Weasel
        piped output and reduce the amount of open sessions that await timeout.
@@ -75,13 +76,56 @@
        settings - see the "Logging" page in the Setup notebook.
        If the attribute "screen" tuned on, the messages will be duplicated on
        the screen.
-       Changing this field requires restarting SF before changes take effect.
+       Changing weasel-log-pipe (excluding auth-failed-frequency options)
+       requires restarting SpamFilter before changes take effect.
+       Comment out weasel-log-pipe to not use Weasel log pipe.
+
+       Old syntax:
+         <weasel-log-pipe screen="Yes">Yes</weasel-log-pipe>
        -->
-  <weasel-log-pipe screen="Yes">Yes</weasel-log-pipe>
+  <weasel-log-pipe screen="Yes">
+
+<!--   You can specify alternate pipes to get the log by option
+       alternative-pipe (may be specified several times). It will be used if
+       the Weasel named pipe is unavailable. If all named pipes (Weasel named
+       pipe and alternate named pipes) are unavailable, the attempt to
+       reconnect will be delayed for a few seconds.
+       The prefix \PIPE\ may be omitted.  -->
+<!--
+    <alternative-pipe>WeaselTransLog_imap</alternative-pipe>
+    <alternative-pipe>\PIPE\WeaselTransLog_from-some-program</alternative-pipe>
+-->
+
+<!--   SpamFilter can create several custom named pipes with the same name to
+       redirect the Weasel log. The name of such pipes is specified by option
+       server-pipe and the number of pipes (i.e. maximum number of simultaneous
+       connections) is set by attribute "number" of option server-pipe. These
+       pipes will be created when SpamFilter connects to Weasel pipe or one of
+       the alternative pipes. This feature solves the problem of multiple
+       access to a single named pipe of the Weasel.
+       The prefix \PIPE\ may be omitted.  -->
+    <server-pipe number="2">WeaselTransLog_sf</server-pipe>
+
+<!--   If option auth-failed-frequency is specified, SF will track failed
+       authorization attempts for each ip address. If the frequency of these
+       events is exceeded, the address will be blocked for the period indicated
+       by option <expiration>.
+       Blocked addresses will trigger a SPAM response from command @ACCEPT if
+       they are not listed in <command-ataccept> / <local> (see below).
+       -->
+    <auth-failed-frequency>
+       <max-events>7</max-events>
+       <duration>5 min.</duration>
+       <expiration>30 min.</expiration>
+    </auth-failed-frequency>
+  </weasel-log-pipe>
 
   <!-- Address (and port - optional) of the names server. If port is not
        specified, the value 53 will be used.  -->
   <name-server>172.26.96.1:53</name-server>
+
+  <!-- Our local MTA. -->
+  <mail-server>127.0.0.1:25</mail-server>
 
   <!-- MTA domain name how it configured in mail server (our host name). -->
   <mail-server-name>mail.network.dom</mail-server-name>
@@ -142,7 +186,11 @@
 
     <!-- This prevents specific names from being checked by URIBL module.
          You don't need duplicate <local-domain> names here. -->
-    <!-- <not-spam>*.services.dom www.hosting.dom</not-spam> -->
+    <not-spam>
+      *.sourceforge.com goo.gl www.w3.org www.google.com
+      twitter.com *.microsoft.com www.ebay.com www.youtube.com
+      itunes.apple.com www.facebook.com www.instagram.com
+    </not-spam>
   </uribl>
 
   <!--
@@ -163,7 +211,7 @@
          (except EHLO) for the founded ip-address. This list should contains
          all names of you MTA also, except specified in option
          "mail-server-name". If you receive all mail from IPS mail server you
-         should point ip-address of this server here.
+         must specify ip-address of this server here.
          
     <relay>
       <addr score="none">1.2.3.0/24 *.local.dom ns.frs.snc.ru</addr>
@@ -173,25 +221,27 @@
     <!-- List of all local networks. -->
     <local>172.26.0.0/16 192.168.0.0/16 *.sakh.rao-esv.ru</local>
 
-    <!-- The maximum number <max-ataccept> of @ACCEPT for a single IP-address
-         during the time interval <duration>. If makes more than <max-ataccept>
-         commands @ACCEPT within the <duration> IP-address will be banned from
-         future @ACCEPT (the following commands will be the result of SPAM for
-         this IP) until the <expiration> is reached. This can be used to
-         prevent server overloading and DoS attacks.
+    <!-- The maximum number <max-ataccept> of @ACCEPT for a single not local
+         IP-address during the time interval <duration>. If makes more than
+         <max-ataccept> commands @ACCEPT within the <duration> IP-address will
+         be banned from future @ACCEPT (the following commands will be the
+         result of SPAM for this IP) until the <expiration> is reached. This
+         can be used to prevent server overloading and DoS attacks.
          By default, the frequency control for @ACCEPT is not used if
          <ip-frequency> is not specified.  -->
     <ip-frequency>
-       <max-ataccept>10</max-ataccept>
+       <max-events>10</max-events>
        <duration>90 sec.</duration>
        <!-- By default, if expiration is not specified - add
             [duration / max-ataccept] seconds to the ban on each @ACCEPT over
-            limit. -->
+            limit.
+            -->
        <expiration>1 hour</expiration>
        <!-- Don't do frequency check for these IPs and host names.
             You can points IP-addresses, IP-networks, ranges of IP-addresses,
             templates of host names (wildcards are supported).
             You may specify multiple <ignore> nodes.
+
             -->
        <ignore>192.168.201.0/24 192.168.202.5 *.some.domain</ignore>
     </ip-frequency>
@@ -303,8 +353,43 @@
       <score-client ttl="6 hours">40</score-client>
     </spamtrap>
 
-    <!-- Score: not local client and local sender and local recipient. -->
+    <!-- Score: not local client IP and local sender and local recipient.
+         Deprecated! Now it is extclnt-locsender-locrcpt/score.
     <score-extclnt-locsender-locrcpt>15</score-extclnt-locsender-locrcpt>
+    -->
+
+    <!-- Not local client IP but local sender and local recipient. -->
+    <extclnt-locsender-locrcpt>
+
+    <!-- Check the existence of the local sender on our MTA <config> /
+         <mail-server>.
+         If option nonexistent-locsender is specified, a sender with a
+         non-local ip address will be checked on our server. If the sender does
+         not exist, option score will be applied. Option score-client: this ip
+         address will be saved for the period specified by the attribute
+         "expiration" and at that time the value score-client will be applied
+         to it.
+
+         Caution!
+
+         Using option nonexistent-locsender generates a request from SpamFilter
+         to MTA, which in turn will lead to an @ACCEPT subquery to SpamFilter.
+         If you use Weasel, uncheck "Serialise filter operations" in the Weasel
+         Setup notebook. Otherwise, the request from SpamFilter to MTA will
+         cause a dead lock.
+         -->
+      <!--
+      <nonexistent-locsender>
+         <score>SPAM</score>
+         <score-client expiration="24 hours">20</score-client>
+      </nonexistent-locsender>
+      -->
+
+      <!-- Score: local sender is existing on our MTA <config>/<mail-server> or
+           local MTA not specified or nonexistent-locsender not specified. -->
+      <score>15</score>
+
+    </extclnt-locsender-locrcpt>
 
     <!-- Execute the following checks only if RWL's "trust level" (detected
          on command MAIL) less ("more trust") than value "mailfrom-on-rwl".

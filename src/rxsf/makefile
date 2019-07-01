@@ -3,7 +3,7 @@
 #
 
 DLLNAME = rxsf
-VERSION = 1.0.0
+VERSION = 1.0.2
 BINPATH = ..\..\sf\weasel
 AUTOR = Andrey Vasilkin
 COMMENT = REXX interface for SpamFilter
@@ -13,7 +13,7 @@ COMMENT = REXX interface for SpamFilter
 DLLFILE = $(BINPATH)\$(DLLNAME).dll
 LNKFILE = $(DLLNAME).lnk
 
-SRCS = rxsf.c util.c
+SRCS = rxsf.c
 !ifdef DEBUG
 SRCS += debug.c
 !endif
@@ -37,6 +37,7 @@ COMMENT = $(COMMENT) (debug version)
 $(DLLFILE): infCompiling $(OBJS) $(LNKFILE)
   @echo * Link: $@
   @wlink @$(LNKFILE)
+  @lxlite $@
 
 $(LNKFILE):
   @%create $@

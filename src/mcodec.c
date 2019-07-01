@@ -7,8 +7,9 @@
 #include <io.h>
 #include <ctype.h>
 #include <iconv.h>
-#include <debug.h>
+#include "hmem.h"
 #include "mcodec.h"
+#include "debug.h"     // Must be the last.
 
 #define FILE_IN_BUF_SIZE	65535
 #define FILE_OUT_BUF_SIZE	65535
@@ -410,7 +411,8 @@ static ULONG _encQuotedPrintableNoSp(PCODEC pCodec, PCHAR *ppcDst,
 static ULONG _decQuotedPrintable(PCODEC pCodec, PCHAR *ppcDst, PULONG pcbDst,
                                  PCHAR *ppcSrc, PULONG pcbSrc)
 {
-  BOOL		fEnd = ( ppcSrc == NULL ) || ( pcbSrc == NULL ) || ( *pcbSrc == 0 );
+  BOOL		fEnd = ( ppcSrc == NULL ) || ( pcbSrc == NULL ) ||
+                       ( *pcbSrc == 0 );
   ULONG		cbBuf;
   PCHAR		pcDst = *ppcDst;
   ULONG		cbDst = *pcbDst;
@@ -469,6 +471,9 @@ static ULONG _decQuotedPrintable(PCODEC pCodec, PCHAR *ppcDst, PULONG pcbDst,
     }
     else	// not encoded byte
     {
+      if ( chIn == '_' )
+        chIn = ' ';
+
       pCodec->cbInBuf--;
       *((PULONG)&pCodec->acInBuf) >>= 8;
     }
@@ -589,7 +594,7 @@ ULONG codecFile(PCODEC pCodec, PSZ pszFOut, PSZ pszFIn)
     return CODEC_CREATE_FILE_ERROR;
   }
 
-  pcIn = debugMAlloc( FILE_IN_BUF_SIZE );
+  pcIn = hmalloc( FILE_IN_BUF_SIZE );
   if ( pcIn == NULL )
   {
     close( hfIn );
@@ -597,10 +602,10 @@ ULONG codecFile(PCODEC pCodec, PSZ pszFOut, PSZ pszFIn)
     return CODEC_NOT_ENOUGH_MEMORY;
   }
 
-  pcOut = debugMAlloc( FILE_OUT_BUF_SIZE );
+  pcOut = hmalloc( FILE_OUT_BUF_SIZE );
   if ( pcOut == NULL )
   {
-    debugFree( pcIn );
+    hfree( pcIn );
     close( hfIn );
     close( hfOut );
     return CODEC_NOT_ENOUGH_MEMORY;
@@ -608,7 +613,7 @@ ULONG codecFile(PCODEC pCodec, PSZ pszFOut, PSZ pszFIn)
 
   do
   {
-    cbRead = read( hfIn, pcIn, FILE_IN_BUF_SIZE ); 
+    cbRead = read( hfIn, pcIn, FILE_IN_BUF_SIZE );
     if ( cbRead == -1 )
     {
       ulRes = CODEC_IO_ERROR;
@@ -635,8 +640,8 @@ ULONG codecFile(PCODEC pCodec, PSZ pszFOut, PSZ pszFIn)
   }
   while( ( cbRead != 0 ) && ( ulRes == CODEC_OK ) );
 
-  debugFree( pcIn );
-  debugFree( pcOut );
+  hfree( pcIn );
+  hfree( pcOut );
   close( hfIn );
   close( hfOut );
 
@@ -648,7 +653,7 @@ static ULONG _codecCopyWords(PCHAR pcDst, ULONG cbDst, PSZ *ppszSrc)
 {
   PCHAR		pcNextWord;
   ULONG		cbWord;
-  PSZ		pszSrc = *ppszSrc;
+  PSZ  		pszSrc = *ppszSrc;
   ULONG		cbResult = 0;
 
   while( isspace( *pszSrc ) )
@@ -761,11 +766,11 @@ PSZ codecEncodedWordNew(ULONG ulType, PSZ pszCharset, ULONG ulFirstLineSpace,
     LONG	cbBytes;
 
     if ( fPlainText )
-      pszEW = debugStrDup( pszData );
+      pszEW = hstrdup( pszData );
     else
     {
       cbBytes = cbData * 3;			// "body" max. size
-      pcDst = debugMAlloc( cbBytes + cbPref + 4 );	// 4: "?=", ZERO, ZERO
+      pcDst = hmalloc( cbBytes + cbPref + 4 );	// 4: "?=", ZERO, ZERO
 
       memcpy( pcDst, &acPref, cbPref );
       cbBytes = codecConvBuf( ulEncType, &pcDst[cbPref], cbBytes,
@@ -775,9 +780,9 @@ PSZ codecEncodedWordNew(ULONG ulType, PSZ pszCharset, ULONG ulFirstLineSpace,
       else
       {
         *((PULONG)&pcDst[cbPref + cbBytes]) = '\0\0=?';
-        pszEW = debugStrDup( pcDst );
+        pszEW = hstrdup( pcDst );
       }
-      debugFree( pcDst );
+      hfree( pcDst );
     }
 
     return pszEW;
@@ -788,11 +793,11 @@ PSZ codecEncodedWordNew(ULONG ulType, PSZ pszCharset, ULONG ulFirstLineSpace,
   {
     // Allocate memory for next line.
     cbEW = ( ulEWPos == 0 ? ( 76 - ulFirstLineSpace ) : ulEWPos + 78 );
-    pszEWNew = debugReAlloc( pszEW, cbEW );
+    pszEWNew = hrealloc( pszEW, cbEW );
     if ( pszEWNew == NULL )
     {
       if ( pszEW != NULL )
-        debugFree( pszEW );
+        hfree( pszEW );
       return NULL;
     }
     pszEW = pszEWNew;
@@ -1008,11 +1013,11 @@ PSZ codecDecodeWordNew(PSZ pszCharset, PCHAR pcData, ULONG cbData)
     // pcWord:cbWord - decoded encoded-word or "real" word
     // Allocate memory, copy word to result.
 
-    pszResNew = debugReAlloc( pszRes, ulResPos + cbWord + 2 );
+    pszResNew = hrealloc( pszRes, ulResPos + cbWord + 2 );
     if ( pszResNew == NULL )
     {
       if ( pszRes != NULL )
-        debugFree( pszRes );
+        hfree( pszRes );
       return NULL;
     }
     pszRes = pszResNew;
@@ -1028,7 +1033,7 @@ PSZ codecDecodeWordNew(PSZ pszCharset, PCHAR pcData, ULONG cbData)
 VOID codecEncodedWordFree(PSZ pszEncodedWord)
 {
   if ( pszEncodedWord )
-    debugFree( pszEncodedWord );
+    hfree( pszEncodedWord );
 }
 
 LONG codecIConvBuf(PSZ pszDstCode, PCHAR pcDst, ULONG cbDst,

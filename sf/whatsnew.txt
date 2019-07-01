@@ -1,3 +1,32 @@
+2019-07-01 ver. 1.1.5
+  - Optimization of the operation of the pipes transmitting log from Weasel.
+  - New shared event semaphores: \SEM32\SpamFilter\shutdown and
+    \SEM32\SpamFilter\reconfigure.
+  - Version number in usage information (command line switch -?).
+  - New Weasel filters routine sfQuery.cmd. Now it supports work through system
+    pipes and may not use rxsf.dll (optional, see comments for
+    pipeName/socketName in sfQuery.cmd). However, it is recommended to use a
+    local socket.
+  - Pipe name in configuration file on which SpamFilter will receive requests
+    may be short (without "\PIPE\" prefix) or complete form.
+  - Socket name in configuration file on which SpamFilter will receive requests
+    may be short (without "\socket\" prefix) or complete form.
+  - Attribute from-local of option update-header in the configuration did not
+    work. SF always added the header X-SF to email messages. Fixed.
+
+2019-06-11 ver. 1.1.4
+  - Event handling: not a local client, but a local sender and local recipient.
+    See the new option extclnt-locsender-locrcpt in the configuration file.
+    Option score-extclnt-locsender-locrcpt is deprecated.
+  - ehlo in X-SF.
+  - Reading Weasel log from alternative named pipes. Redirecting the Weasel log
+    to the new named pipes. IP address blocking when the set frequency of
+    unsuccessful authorizations is exceeded.
+    See the new format for weasel-log-pipe option in the configuration file.
+  - Fixed receiving requests through named pipes.
+  - New command line switch -R.
+  - High memory support.
+
 2016-09-16 ver. 1.1.3
   - Search EHLO strings among names of MX servers of client's domain.
     Sample:

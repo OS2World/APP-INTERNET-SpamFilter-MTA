@@ -10,6 +10,7 @@
 #define STAT_IP_FREQ_LIMIT       6
 #define STAT_SPAM_URIHOSTS_FOUND 7
 #define STAT_COMMAND_TIMEOUT     8
+#define STAT_AUTHFAIL_BLOCK      9
 
 BOOL statInit();
 VOID statDone();

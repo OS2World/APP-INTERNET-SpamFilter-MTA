@@ -3,8 +3,9 @@
 #include "log.h"
 #include "util.h"
 #include "datafile.h"
-#include "debug.h"
 #include "addrlist.h"
+#include "hmem.h"
+#include "debug.h"     // Must be the last.
 
 static int _compKey(const void *pkey, const void *pbase)
 {
@@ -19,7 +20,7 @@ BOOL addrlstInit(PADDRLIST pAddrList, ULONG ulInitRecords)
   if ( ulInitRecords == 0 )
     ulInitRecords = 16;
 
-  pAddrList->ppItems = debugMAlloc( sizeof(PADDRITEM) * ulInitRecords );
+  pAddrList->ppItems = hmalloc( sizeof(PADDRITEM) * ulInitRecords );
   if ( pAddrList->ppItems == NULL )
   {
     debug( "Not enough memory" );
@@ -30,7 +31,7 @@ BOOL addrlstInit(PADDRLIST pAddrList, ULONG ulInitRecords)
   if ( pAddrList->hmtxList == NULLHANDLE )
   {
     debug( "xplMutexCreate() failed" );
-    debugFree( pAddrList->ppItems );
+    hfree( pAddrList->ppItems );
     pAddrList->ppItems = NULL;
     return FALSE;
   }
@@ -47,10 +48,10 @@ VOID addrlstDone(PADDRLIST pAddrList)
   while( pAddrList->cItems != 0 )
   {
     pAddrList->cItems--;
-    debugFree( pAddrList->ppItems[pAddrList->cItems] );
+    hfree( pAddrList->ppItems[pAddrList->cItems] );
   }
 
-  debugFree( pAddrList->ppItems );
+  hfree( pAddrList->ppItems );
   xplMutexDestroy( pAddrList->hmtxList );
   memset( pAddrList, 0, sizeof(ADDRLIST) );
 }
@@ -75,7 +76,7 @@ BOOL addrlstAdd(PADDRLIST pAddrList, PSZ pszAddr, ULONG ulTTL)
   {
     // Address is not found in the list.
 
-    pItem = debugMAlloc( sizeof(ADDRITEM) + cbAddr );
+    pItem = hmalloc( sizeof(ADDRITEM) + cbAddr );
     if ( pItem == NULL )
     {
       debug( "Not enough memory" );
@@ -86,12 +87,12 @@ BOOL addrlstAdd(PADDRLIST pAddrList, PSZ pszAddr, ULONG ulTTL)
     if ( pAddrList->cItems == pAddrList->ulMaxItems )
     {
       // Expand list for next 64 records.
-      PADDRITEM        *ppItems = debugReAlloc( pAddrList->ppItems,
+      PADDRITEM        *ppItems = hrealloc( pAddrList->ppItems,
                               sizeof(PADDRITEM) * ( pAddrList->cItems + 64 ) );
       if ( ppItems == NULL )
       {
         debug( "Not enough memory" );
-        debugFree( pItem );
+        hfree( pItem );
         xplMutexUnlock( pAddrList->hmtxList );
         return FALSE;
       }
@@ -165,7 +166,7 @@ VOID addrlstClean(PADDRLIST pAddrList)
          ( pAddrList->ppItems[lIdx]->timeExpire >= timeNow ) )
       continue;
 
-    debugFree( pAddrList->ppItems[lIdx] );
+    hfree( pAddrList->ppItems[lIdx] );
 
     pAddrList->cItems--;
     memcpy( &pAddrList->ppItems[lIdx], &pAddrList->ppItems[lIdx + 1],
@@ -247,7 +248,7 @@ BOOL addrlstLoad(PADDRLIST pAddrList, PSZ pszFile)
     if ( pAddrList->ppItems[lIdx]->timeExpire == 0 )
       continue;
 
-    debugFree( pAddrList->ppItems[lIdx] );
+    hfree( pAddrList->ppItems[lIdx] );
     memcpy( &pAddrList->ppItems[lIdx], &pAddrList->ppItems[lIdx + 1],
             sizeof(PADDRITEM) * ((--pAddrList->cItems) - lIdx) );
   }

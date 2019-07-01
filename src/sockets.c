@@ -1,5 +1,6 @@
-#include "debug.h"
+#include <stdlib.h>
 #include "xpl.h"
+#include "debug.h"     // Must be the last.
 
 #define _MAX_SOCKETS   64
 

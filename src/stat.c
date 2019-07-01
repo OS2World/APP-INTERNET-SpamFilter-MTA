@@ -2,7 +2,6 @@
 #include <libxml/tree.h>
 #include <string.h>
 #include <time.h>
-#include "debug.h"
 #include "xpl.h"
 #include "util.h"
 #include "xmlutil.h"
@@ -12,7 +11,9 @@
 #include "requests.h"
 #include "log.h"
 #include "datafile.h"
+#include "hmem.h"
 #include "stat.h"
+#include "debug.h"     // Must be the last.
 
 #define STAT_FILE      "stat.xml"
 #define ROOT_NODE      "sf-statistics"
@@ -36,7 +37,8 @@ static STATITEM        aItems[] =
   { "spam-trap", 0 },            // 5 STAT_SPAM_TRAP
   { "ip-freq-limit", 0 },        // 6 STAT_IP_FREQ_LIMIT
   { "spam-urihosts-found", 0 },  // 7 STAT_SPAM_URIHOSTS_FOUND
-  { "command-timeout", 0 }       // 8 STAT_COMMAND_TIMEOUT
+  { "command-timeout", 0 },      // 8 STAT_COMMAND_TIMEOUT
+  { "auth-fail-block", 0 }       // 9 STAT_AUTHFAIL_BLOCK
 };
 static PSZ             pszGeneralStart = NULL;
 
@@ -73,7 +75,7 @@ BOOL statInit()
     return FALSE;
 
   if ( pszGeneralStart == NULL )
-    pszGeneralStart = debugStrDup( _statGetTimeStr( sizeof(acBuf), &acBuf ) );
+    pszGeneralStart = hstrdup( _statGetTimeStr( sizeof(acBuf), &acBuf ) );
 
   // Load general statistics.
 
@@ -113,8 +115,8 @@ BOOL statInit()
         if ( pxcValue != NULL )
         {
           if ( pszGeneralStart != NULL )
-            debugFree( pszGeneralStart );
-          pszGeneralStart = debugStrDup( pxcValue );
+            hfree( pszGeneralStart );
+          pszGeneralStart = hstrdup( pxcValue );
          }
 
         for( pxmlNode = pxmlNode->children; pxmlNode != NULL; pxmlNode = pxmlNode->next )
@@ -152,7 +154,7 @@ VOID statDone()
 
   if ( pszGeneralStart != NULL )
   {
-    debugFree( pszGeneralStart );
+    hfree( pszGeneralStart );
     pszGeneralStart = NULL;
   }
 

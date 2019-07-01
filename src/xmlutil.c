@@ -4,9 +4,10 @@
 #include <string.h>
 #include <stdarg.h>
 #include <log.h>
-#include "debug.h"
 #include "xmlutil.h"
 #include "util.h"
+#include "hmem.h"
+#include "debug.h"     // Must be the last.
 
 #define _SI_FL_MULTIPLE          1
 #define _SI_FL_REQUIRED          2
@@ -156,7 +157,7 @@ LONG xmluBeginScan(xmlNodePtr xmlNode, PXMLUSCAN *ppScan, PSZ pszNodes)
 
   // Allocate memory for the scan object.
 
-  pScan = debugCAlloc( 1, ( sizeof(XMLUSCAN) - sizeof(XMLUSCANNODE) ) +
+  pScan = hcalloc( 1, ( sizeof(XMLUSCAN) - sizeof(XMLUSCANNODE) ) +
                           ( cNodes * sizeof(XMLUSCANNODE) ) );
   if ( pScan == NULL )
   {
@@ -241,7 +242,7 @@ LONG xmluScan(PXMLUSCAN pScan)
 VOID xmluEndScan(PXMLUSCAN pScan)
 {
   if ( pScan != NULL )
-    debugFree( pScan );
+    hfree( pScan );
 }
 
 VOID xmluScanLog(PXMLUSCAN pScan, PSZ pszFormat, ...)

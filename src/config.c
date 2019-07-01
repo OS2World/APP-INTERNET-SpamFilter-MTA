@@ -1,18 +1,20 @@
 #include <libxml/parser.h>
 #include <libxml/tree.h>
 #include <string.h>
-#include "debug.h"
 #include "xpl.h"
 #include "rwmutex.h"
 #include "sf.h"
 #include "log.h"
 #include "xmlutil.h"
 #define CONFIG_C
+#include "hmem.h"
 #include "config.h"
+#include "debug.h"     // Must be the last.
 
 #define _CFG_MAX_THREADS         100
 #define _CFG_DEF_THREADS         5
-#define _CFG_MAX_PIPES           25
+#define _CFG_DEF_WEASEL_LOG_PIPE "WeaselTransLog"
+#define _CFG_MAX_PIPES           100
 #define _CFG_DEF_PIPES           5
 #define _CFG_MIN_COMMAND_TIMEOUT 1
 #define _CFG_MAX_COMMAND_TIMEOUT (60*60)
@@ -50,7 +52,7 @@ BOOL cfgHostListAdd(PLINKSEQ plsList, LONG lScore, ULONG cbHost, PCHAR pcHost)
 
   if ( utilStrToInAddrRange( cbHost, pcHost, &stInAddrFirst, &stInAddrLast ) )
   {
-    pHost = debugMAlloc( ( sizeof(HOSTREC) - 1 ) +
+    pHost = hmalloc( ( sizeof(HOSTREC) - 1 ) +
                          ( 2 * sizeof(struct in_addr) ) );
     if ( pHost != NULL )
     {
@@ -61,7 +63,7 @@ BOOL cfgHostListAdd(PLINKSEQ plsList, LONG lScore, ULONG cbHost, PCHAR pcHost)
   }
   else
   {
-    pHost = debugMAlloc( sizeof(HOSTREC) + cbHost );
+    pHost = hmalloc( sizeof(HOSTREC) + cbHost );
     if ( pHost != NULL )
     {
       pHost->cbName = cbHost;
@@ -157,6 +159,34 @@ BOOL cfgHostListCheckName(PLINKSEQ plsList, ULONG cbHost, PCHAR pcHost,
 
 // Utils
 // -----
+
+
+static VOID _cfgAddWeaselLogPipe(PCONFIG pConfig, ULONG cbName, PCHAR pcName)
+{
+  ULONG      cbWeaselLogPipes;
+  PSZ        pszNew;
+
+  if ( ( cbName != 0 ) && ( pcName != NULL ) )
+  {
+    if ( pConfig->pcWeaselLogPipes == NULL )
+      cbWeaselLogPipes = 0;
+    else
+      cbWeaselLogPipes = strlen( pConfig->pcWeaselLogPipes ) + 1;
+
+    pszNew = hrealloc( pConfig->pcWeaselLogPipes,
+                       cbWeaselLogPipes + cbName + 2 );
+
+    if ( pszNew != NULL )
+    {
+      memcpy( &pszNew[cbWeaselLogPipes], pcName, cbName );
+      cbWeaselLogPipes += cbName;
+      pszNew[cbWeaselLogPipes++] = '\0';  // End of pipe name.
+      pszNew[cbWeaselLogPipes]   = '\0';  // Double zero - end of list.
+
+      pConfig->pcWeaselLogPipes = pszNew;
+    }
+  }
+}
 
 // BOOL _cfgStrToScore(ULONG cbValue, PCHAR pcValue, PLONG plScore)
 //
@@ -312,43 +342,49 @@ static BOOL __cfgReadURIBL(PCONFIG pConfig, xmlNodePtr pNode)
   return lRC == XMLU_SCAN_END;
 }
 
-// BOOL __cfgReadIPFrequency(PCONFIG pConfig, xmlNodePtr pNode)
+// BOOL __cfgReadFrequency(PCONFIG pConfig, xmlNodePtr pNode,
+//                         PULONG pulMaxEvents, PULONG pulDuration,
+//                         PULONG pulExpiration, PLINKSEQ plsIgnore)
 //
 // Parse <ip-frequency> XML-tree.
 
-static BOOL __cfgReadIPFrequency(PCONFIG pConfig, xmlNodePtr pNode)
+static BOOL __cfgReadFrequency(PCONFIG pConfig, xmlNodePtr pNode,
+                               PULONG pulMaxEvents, PULONG pulDuration,
+                               PULONG pulExpiration, PLINKSEQ plsIgnore)
 {
   PXMLUSCAN            pScan;
   LONG                 lRC;
   BOOL                 fNoError = TRUE;
 
-  lRC = xmluBeginScan( pNode, &pScan, "max-ataccept:r duration:r expiration "
-                                      "ignore:m" );
+  lRC = xmluBeginScan( pNode, &pScan, "max-ataccept max-events duration:r "
+                                      "expiration ignore:m" );
   while( lRC >= 0 )
   {
     switch( lRC )
     {
-      case 0: // max-ataccept
+      case 0: // max-ataccept (old syntax)
+        xmluScanLog( pScan, "<max-ataccept> is an obsolete parameter, "
+                            "please use <max-events>" );
+      case 1: // max-events
         fNoError = utilStrToULong( pScan->cbValue, pScan->pcValue, 1, ~0,
-                                   &pConfig->ulIPFreqMaxAtAcceptNum );
+                                   pulMaxEvents );
         break;
 
-      case 1: // duration
+      case 2: // duration
         fNoError = utilStrTimeToSec( pScan->cbValue, pScan->pcValue,
-                                     &pConfig->ulIPFreqDuration ) &&
-                   ( pConfig->ulIPFreqDuration >= 10 ) &&
-                   ( pConfig->ulIPFreqDuration <= 86400 );
+                                     pulDuration ) &&
+                   ( *pulDuration >= 10 ) && ( *pulDuration <= 86400 );
         break;
 
-      case 2: // expiration
+      case 3: // expiration
         fNoError = utilStrTimeToSec( pScan->cbValue, pScan->pcValue,
-                                     &pConfig->ulIPFreqExpiration ) &&
-                   ( pConfig->ulIPFreqExpiration <= 86400 );
+                                     pulExpiration ) &&
+                   ( *pulExpiration <= 86400 );
         break;
 
-      case 3: // ignore
-        cfgHostListAddList( &pConfig->lsHostListIPFreqIgnore,
-                            0, pScan->cbValue, pScan->pcValue );
+      case 4: // ignore
+        if ( plsIgnore != NULL )
+          cfgHostListAddList( plsIgnore, 0, pScan->cbValue, pScan->pcValue );
         break;
     }
 
@@ -364,9 +400,9 @@ static BOOL __cfgReadIPFrequency(PCONFIG pConfig, xmlNodePtr pNode)
 
   xmluEndScan( pScan );
 
-  if ( pConfig->ulIPFreqMaxAtAcceptNum > (pConfig->ulIPFreqDuration * 100) )
+  if ( *pulMaxEvents > (*pulDuration * 100) )
   {
-    xmluLog( pNode, "Invalid <duration> / <max-ataccept> values." );
+    xmluLog( pNode, "Invalid <duration> / <max-events> values." );
     return FALSE;
   }
 
@@ -522,6 +558,92 @@ static BOOL __cfgReadSpamTrap(PCONFIG pConfig, xmlNodePtr pNode)
   return lRC == XMLU_SCAN_END;
 }
 
+// BOOL _cfgReadExtClntLocSenderLocRcpt( pConfig, pScan->xmlNode )
+//
+// Parse <extclnt-locsender-locrcpt> XML-tree.
+
+static BOOL __cfgReadNonexistentLocSender(PCONFIG pConfig, xmlNodePtr pNode)
+{
+  PXMLUSCAN            pScan;
+  LONG                 lRC;
+  BOOL                 fNoError = TRUE;
+  PSZ                  pszAttr;
+
+  lRC = xmluBeginScan( pNode, &pScan, "score:r score-client" );
+  while( lRC >= 0 )
+  {
+    switch( lRC )
+    {
+      case 0: // score
+        fNoError = _cfgStrToScore( pScan->cbValue, pScan->pcValue,
+                                   &pConfig->lScoreNonexistentLocSndr );
+        break;
+
+      case 1: // score-client
+        pszAttr = xmlGetNoNsProp( pNode, "expiration" );
+
+        if ( ( pszAttr != NULL ) &&
+             !utilStrTimeToSec( strlen(pszAttr), pszAttr,
+                             &pConfig->ulExpirationClientNonexistentLocSndr ) )
+        {
+          xmluLog( pNode, "Invalid expiration value: \"%s\".", pszAttr );
+          return FALSE;
+        }
+
+        fNoError = _cfgStrToScore( pScan->cbValue, pScan->pcValue,
+                                   &pConfig->lScoreClientNonexistentLocSndr );
+        break;
+    }
+
+    if ( !fNoError )
+    {
+      xmluScanLog( pScan, "Invalid value." );
+      break;
+    }
+
+    lRC = xmluScan( pScan );
+  }
+
+  xmluEndScan( pScan );
+
+  return lRC == XMLU_SCAN_END;
+}
+
+static BOOL _cfgReadExtClntLocSenderLocRcpt(PCONFIG pConfig, xmlNodePtr pNode)
+{
+  PXMLUSCAN            pScan;
+  LONG                 lRC;
+  BOOL                 fNoError = TRUE;
+
+  lRC = xmluBeginScan( pNode, &pScan, "nonexistent-locsender:e score:r" );
+  while( lRC >= 0 )
+  {
+    switch( lRC )
+    {
+      case 0: // nonexistent-locsender
+        fNoError = __cfgReadNonexistentLocSender( pConfig, pScan->xmlNode );
+        break;
+
+      case 1: // score
+        fNoError = _cfgStrToScore( pScan->cbValue, pScan->pcValue,
+                                       &pConfig->lScoreExtClntLocSndrLocRcpt );
+        break;
+    }
+
+    if ( !fNoError )
+    {
+      xmluScanLog( pScan, "Invalid value." );
+      break;
+    }
+
+    lRC = xmluScan( pScan );
+  }
+
+  xmluEndScan( pScan );
+
+  return lRC == XMLU_SCAN_END;
+}
+
 // BOOL __cfgReadGreylist(PCONFIG pConfig, xmlNodePtr pNode)
 //
 // Parse <greylist> XML-tree.
@@ -613,7 +735,7 @@ static BOOL __cfgReadDNSBL(PCONFIG pConfig, xmlNodePtr pNode)
   cDNSBL = xmluChildElementCount( pNode, "provider" );
   if ( cDNSBL != 0 )
   {
-    pDNSBL = debugCAlloc( cDNSBL, sizeof(DNSBL) );
+    pDNSBL = hcalloc( cDNSBL, sizeof(DNSBL) );
     if ( pDNSBL == NULL )
     {
       debug( "Not enough memory" );
@@ -642,13 +764,13 @@ static BOOL __cfgReadDNSBL(PCONFIG pConfig, xmlNodePtr pNode)
           if ( __cfgFillHostListScore( &pDNSBL->lsHostListAnswers,
                                        pScan->xmlNode, TRUE ) )
           {
-            pDNSBL->pszName = debugStrDup( pszAttr );
+            pDNSBL->pszName = hstrdup( pszAttr );
             pDNSBL++;
             pConfig->cDNSBL++;
             break;
           }
 
-          lnkseqFree( &pDNSBL->lsHostListAnswers, PHOSTREC, debugFree );
+          lnkseqFree( &pDNSBL->lsHostListAnswers, PHOSTREC, hfree );
         }
 
         fNoError = FALSE;
@@ -877,7 +999,7 @@ static BOOL __cfgReadCmdAttributes(PCONFIG pConfig, ULONG ulCommandNo,
   PSZ                  pszAttr = xmlGetNoNsProp( pNode, "score-limit" );
 
   if ( ( pszAttr != NULL ) &&
-       !utilStrToULong( strlen( pszAttr ), pszAttr, 1, ~0,
+       !utilStrToULong( -1, pszAttr, 1, ~0,
                       (PULONG)&pConfig->aCmdParam[ulCommandNo].lScoreLimit ) )
   {
     xmluLog( pNode, "Invalid score limit value: \"%s\".", pszAttr );
@@ -894,6 +1016,78 @@ static BOOL __cfgReadCmdAttributes(PCONFIG pConfig, ULONG ulCommandNo,
   }
 
   return TRUE;  
+}
+
+static BOOL __cfgReadCmdWeaselLogPipe(PCONFIG pConfig, xmlNodePtr pNode)
+{
+  PXMLUSCAN            pScan;
+  LONG                 lRC;
+  BOOL                 fNoError = TRUE;
+  ULONG                cbValue;
+  PCHAR                pcValue;
+  PSZ                  pszAttr;
+  BOOL                 fNotEmpty = xmluGetNodeText( pNode, &cbValue, &pcValue );
+
+  pConfig->fWeaselLogToScreen = __cfgAttrSwitch( pNode, "screen" );
+
+  if ( !fNotEmpty )
+  {
+    // Old syntax.
+
+    pConfig->fWeaselLogPipe = utilStrWordIndex( _CFG_SW_ON, cbValue, pcValue )
+                                != -1;
+    if ( pConfig->fWeaselLogPipe ||
+         ( utilStrWordIndex( "0 NO N OFF", cbValue, pcValue ) != -1 ) )
+    return TRUE;       // Old syntax
+  }
+
+  lRC = xmluBeginScan( pNode, &pScan, "alternative-pipe:m server-pipe "
+                                      "auth-failed-frequency:e" );
+  while( lRC >= 0 )
+  {
+    switch( lRC )
+    {
+      case 0: // alternative-pipe
+        _cfgAddWeaselLogPipe( pConfig, pScan->cbValue, pScan->pcValue );
+        break;
+
+      case 1: // server-pipe
+        pConfig->pszServerLogPipe = utilStrNewSZ( pScan->cbValue,
+                                                  pScan->pcValue );
+        pszAttr = xmlGetNoNsProp( pScan->xmlNode, "number" );
+        if ( pszAttr == NULL )
+          pConfig->ulServerLogPipes = 1;
+        else
+          fNoError = utilStrToULong( -1, pszAttr, 1, _CFG_MAX_PIPES,
+                                     &pConfig->ulServerLogPipes );
+        break;
+
+      case 2: // auth-failed-frequency
+        fNoError = __cfgReadFrequency( pConfig, pScan->xmlNode,
+                                       &pConfig->ulAuthFailFreqMax,
+                                       &pConfig->ulAuthFailFreqDuration,
+                                       &pConfig->ulAuthFailFreqExpiration,
+                                       NULL );
+    }
+
+    if ( !fNoError )
+    {
+/*      switch( lRC )
+      {
+        case ?:
+          xmluScanLog( pScan, "Invalid value." );
+      }*/
+      break;
+    }
+
+    lRC = xmluScan( pScan );
+  }
+
+  xmluEndScan( pScan );
+
+  pConfig->fWeaselLogPipe = TRUE;
+
+  return lRC == XMLU_SCAN_END;
 }
 
 // XML trees <command-XXXXX>.
@@ -924,7 +1118,11 @@ static BOOL __cfgReadCmdAtAccept(PCONFIG pConfig, xmlNodePtr pNode)
         break;
 
       case 2: // ip-frequency
-        fNoError = __cfgReadIPFrequency( pConfig, pScan->xmlNode );
+        fNoError = __cfgReadFrequency( pConfig, pScan->xmlNode,
+                                       &pConfig->ulIPFreqMaxAtAcceptNum,
+                                       &pConfig->ulIPFreqDuration,
+                                       &pConfig->ulIPFreqExpiration,
+                                       &pConfig->lsHostListIPFreqIgnore );
         break;
 
       case 3: // score-host
@@ -1043,7 +1241,9 @@ static BOOL __cfgReadCmdDATA(PCONFIG pConfig, xmlNodePtr pNode)
 
   lRC = xmluBeginScan( pNode, &pScan,
                        "autowhitelist:e spamtrap:e "
-                       "score-extclnt-locsender-locrcpt mailfrom-on-rwl "
+                       "score-extclnt-locsender-locrcpt "
+                       "extclnt-locsender-locrcpt:e "
+                       "mailfrom-on-rwl "
                        "greylist:e dnsbl:e mailfrom-uribl-ignore:m "
                        "sender-mailbox-check:e spf:e" );
   while( lRC >= 0 )
@@ -1058,34 +1258,38 @@ static BOOL __cfgReadCmdDATA(PCONFIG pConfig, xmlNodePtr pNode)
         fNoError = __cfgReadSpamTrap( pConfig, pScan->xmlNode );
         break;
 
-      case 2: // score-extclnt-locsender-locrcpt
+      case 2: // score-extclnt-locsender-locrcpt (deprecated)
         fNoErrLog = _cfgStrToScore( pScan->cbValue, pScan->pcValue,
                                     &pConfig->lScoreExtClntLocSndrLocRcpt );
         break;
 
-      case 3: // mailfrom-on-rwl
+      case 3: // extclnt-locsender-locrcpt
+        fNoError = _cfgReadExtClntLocSenderLocRcpt( pConfig, pScan->xmlNode );
+        break;
+
+      case 4: // mailfrom-on-rwl
         fNoErrLog = utilStrToULong( pScan->cbValue, pScan->pcValue, 1, 4,
                                     &pConfig->ulCheckMailFromOnRWL );
         break;
 
-      case 4: // greylist
+      case 5: // greylist
         fNoError = __cfgReadGreylist( pConfig, pScan->xmlNode );
         break;
 
-      case 5: // dnsbl
+      case 6: // dnsbl
         fNoError = __cfgReadDNSBL( pConfig, pScan->xmlNode );
         break;
 
-      case 6: // mailfrom-uribl-ignore
+      case 7: // mailfrom-uribl-ignore
         cfgHostListAddList( &pConfig->lsHostListMailFromURIBLIgnore,
                             0, pScan->cbValue, pScan->pcValue );
         break;
 
-      case 7: // sender-mailbox-check
+      case 8: // sender-mailbox-check
         fNoError = __cfgReadMBoxCheck( pConfig, pScan->xmlNode );
         break;
 
-      case 8: // spf
+      case 9: // spf
         fNoError = __cfgReadSPF( pConfig, pScan->xmlNode );
         break;
     }
@@ -1179,56 +1383,62 @@ static VOID _cfgFree(PCONFIG pConfig)
   ULONG    ulIdx;
 
   if ( pConfig->pszDataPath != NULL )
-    debugFree( pConfig->pszDataPath );
+    hfree( pConfig->pszDataPath );
 
   if ( pConfig->pszLogPath != NULL )
-    debugFree( pConfig->pszLogPath );
+    hfree( pConfig->pszLogPath );
 
   if ( pConfig->pszSocket != NULL )
-    debugFree( pConfig->pszSocket );
+    hfree( pConfig->pszSocket );
 
   if ( pConfig->pszPipe != NULL )
-    debugFree( pConfig->pszPipe );
+    hfree( pConfig->pszPipe );
+
+  if ( pConfig->pcWeaselLogPipes != NULL )
+    hfree( pConfig->pcWeaselLogPipes );
+
+  if ( pConfig->pszServerLogPipe != NULL )
+    hfree( pConfig->pszServerLogPipe );
 
   if ( pConfig->pszMailServerName != NULL )
-    debugFree( pConfig->pszMailServerName );
+    hfree( pConfig->pszMailServerName );
 
   if ( pConfig->pcLocalDomains != NULL )
-    debugFree( pConfig->pcLocalDomains );
+    hfree( pConfig->pcLocalDomains );
 
   if ( pConfig->pszSpamStore != NULL )
-    debugFree( pConfig->pszSpamStore );
+    hfree( pConfig->pszSpamStore );
 
   if ( pConfig->pcURIBLProviders != NULL )
-    debugFree( pConfig->pcURIBLProviders );
+    hfree( pConfig->pcURIBLProviders );
 
   if ( pConfig->pcURIBLNotSpam != NULL )
-    debugFree( pConfig->pcURIBLNotSpam );
+    hfree( pConfig->pcURIBLNotSpam );
 
-  lnkseqFree( &pConfig->lsHostListLocal, PHOSTREC, debugFree );
-  lnkseqFree( &pConfig->lsHostListRelays, PHOSTREC, debugFree );
-  lnkseqFree( &pConfig->lsHostListIPFreqIgnore, PHOSTREC, debugFree );
-  lnkseqFree( &pConfig->lsHostListScore, PHOSTREC, debugFree );
-  lnkseqFree( &pConfig->lsHostListRWLIgnore, PHOSTREC, debugFree );
+  lnkseqFree( &pConfig->lsHostListLocal, PHOSTREC, hfree );
+  lnkseqFree( &pConfig->lsHostListRelays, PHOSTREC, hfree );
+  lnkseqFree( &pConfig->lsHostListIPFreqIgnore, PHOSTREC, hfree );
+  lnkseqFree( &pConfig->lsHostListScore, PHOSTREC, hfree );
+  lnkseqFree( &pConfig->lsHostListRWLIgnore, PHOSTREC, hfree );
 
   if ( pConfig->pcRWLProviders != NULL )
-    debugFree( pConfig->pcRWLProviders );
+    hfree( pConfig->pcRWLProviders );
 
-  lnkseqFree( &pConfig->lsHostListMailFrom, PHOSTREC, debugFree );
-  lnkseqFree( &pConfig->lsHostListEHLO, PHOSTREC, debugFree );
-  lnkseqFree( &pConfig->lsHostListEHLOURIBLIgnore, PHOSTREC, debugFree );
+  lnkseqFree( &pConfig->lsHostListMailFrom, PHOSTREC, hfree );
+  lnkseqFree( &pConfig->lsHostListEHLO, PHOSTREC, hfree );
+  lnkseqFree( &pConfig->lsHostListEHLOURIBLIgnore, PHOSTREC, hfree );
 
   if ( pConfig->pcAutoWhitelistIgnoreSenders != NULL )
-    debugFree( pConfig->pcAutoWhitelistIgnoreSenders );
+    hfree( pConfig->pcAutoWhitelistIgnoreSenders );
 
   if ( pConfig->pcSpamTrap != NULL )
-    debugFree( pConfig->pcSpamTrap );
+    hfree( pConfig->pcSpamTrap );
 
   if ( pConfig->pcGreylistIgnoreSenders != NULL )
-    debugFree( pConfig->pcGreylistIgnoreSenders );
+    hfree( pConfig->pcGreylistIgnoreSenders );
 
-  lnkseqFree( &pConfig->lsHostListGreylistIgnore, PHOSTREC, debugFree );
-  lnkseqFree( &pConfig->lsHostListDNSBLIgnore, PHOSTREC, debugFree );
+  lnkseqFree( &pConfig->lsHostListGreylistIgnore, PHOSTREC, hfree );
+  lnkseqFree( &pConfig->lsHostListDNSBLIgnore, PHOSTREC, hfree );
 
   if ( pConfig->paDNSBL != NULL )
   {
@@ -1237,30 +1447,30 @@ static VOID _cfgFree(PCONFIG pConfig)
     for( ulIdx = 0; ulIdx < pConfig->cDNSBL; ulIdx++, pDNSBL++ )
     {
       if ( pDNSBL->pszName != NULL )
-        debugFree( pDNSBL->pszName );
+        hfree( pDNSBL->pszName );
 
-      lnkseqFree( &pDNSBL->lsHostListAnswers, PHOSTREC, debugFree );
+      lnkseqFree( &pDNSBL->lsHostListAnswers, PHOSTREC, hfree );
     }
 
-    debugFree( pConfig->paDNSBL );
+    hfree( pConfig->paDNSBL );
   }
 
-  lnkseqFree( &pConfig->lsHostListMailFromURIBLIgnore, PHOSTREC, debugFree );
+  lnkseqFree( &pConfig->lsHostListMailFromURIBLIgnore, PHOSTREC, hfree );
 
   if ( pConfig->pcMailBoxCheckIgnoreSenders != NULL )
-    debugFree( pConfig->pcMailBoxCheckIgnoreSenders );
+    hfree( pConfig->pcMailBoxCheckIgnoreSenders );
 
-  lnkseqFree( &pConfig->lsMailBoxCheckIgnore, PHOSTREC, debugFree );
-  lnkseqFree( &pConfig->lsHostListSPFIgnore, PHOSTREC, debugFree );
-  lnkseqFree( &pConfig->lsHostListMsgId, PHOSTREC, debugFree );
-  lnkseqFree( &pConfig->lsHostListMsgIdIgnore, PHOSTREC, debugFree );
+  lnkseqFree( &pConfig->lsMailBoxCheckIgnore, PHOSTREC, hfree );
+  lnkseqFree( &pConfig->lsHostListSPFIgnore, PHOSTREC, hfree );
+  lnkseqFree( &pConfig->lsHostListMsgId, PHOSTREC, hfree );
+  lnkseqFree( &pConfig->lsHostListMsgIdIgnore, PHOSTREC, hfree );
 
-  debugFree( pConfig );
+  hfree( pConfig );
 }
 
 static PCONFIG _cfgNew(PSZ pszFile)
 {
-  PCONFIG              pConfig = debugCAlloc( 1, sizeof(CONFIG) );
+  PCONFIG              pConfig = hcalloc( 1, sizeof(CONFIG) );
   xmlDocPtr            pDoc;
   xmlNodePtr           pNode;
   PXMLUSCAN            pScan;
@@ -1299,7 +1509,7 @@ static PCONFIG _cfgNew(PSZ pszFile)
     }
 
     logWrite( &acBuf );
-    debugFree( pConfig );
+    hfree( pConfig );
     return NULL;
   }
 
@@ -1310,11 +1520,13 @@ static PCONFIG _cfgNew(PSZ pszFile)
   {
     logWrite( "Unknown root node <%s>", pNode->name );
     xmlFreeDoc( pDoc );
-    debugFree( pConfig );
+    hfree( pConfig );
     return FALSE;
   }
 
   pConfig->ulThreads = _CFG_DEF_THREADS;
+  _cfgAddWeaselLogPipe( pConfig, strlen( _CFG_DEF_WEASEL_LOG_PIPE ),
+                        _CFG_DEF_WEASEL_LOG_PIPE );
   pConfig->ulURIBLHits = 1;
   pConfig->ulPipes = _CFG_DEF_PIPES;
   pConfig->ulCommandTimeout = _CFG_DEF_COMMAND_TIMEOUT;
@@ -1342,7 +1554,8 @@ static PCONFIG _cfgNew(PSZ pszFile)
 
   lRC = xmluBeginScan( pNode, &pScan,
           "path-data:pr path-log:pr log-level log-size log-history socket:r "
-          "pipe threads weasel-log-pipe name-server:r mail-server-name:r "
+          "pipe threads weasel-log-pipe:e name-server:r mail-server "
+          "mail-server-name:r "
           "local-domain:rm spam-store update-header command-timeout uribl:e "
           "command-ataccept:re command-ehlo:re command-rset:re command-mail:re "
           "command-rcpt:re command-data:re command-atcontent:re "
@@ -1383,7 +1596,7 @@ static PCONFIG _cfgNew(PSZ pszFile)
         break;
 
       case 6: // pipe
-        if ( pScan->cbValue > (_MAX_PATH - 7 /* \PIPE\ and ZERO */) )
+        if ( pScan->cbValue > (CCHMAXPATH - 7 /* \PIPE\ and ZERO */) )
         {
           fNoError = FALSE;
           break;
@@ -1392,8 +1605,8 @@ static PCONFIG _cfgNew(PSZ pszFile)
         pConfig->pszPipe = utilStrNewSZ( pScan->cbValue, pScan->pcValue );
         pszAttr = xmlGetNoNsProp( pScan->xmlNode, "number" );
         if ( pszAttr != NULL )
-          fNoError = utilStrToULong( strlen( pszAttr ), pszAttr, 1,
-                                     _CFG_MAX_PIPES, &pConfig->ulPipes );
+          fNoError = utilStrToULong( -1, pszAttr, 1, _CFG_MAX_PIPES,
+                                     &pConfig->ulPipes );
         break;
 
       case 7: // threads
@@ -1402,10 +1615,7 @@ static PCONFIG _cfgNew(PSZ pszFile)
         break;
 
       case 8: // weasel-log-pipe
-        pConfig->fWeaselLogPipe = utilStrWordIndex( _CFG_SW_ON, pScan->cbValue,
-                                                    pScan->pcValue ) != -1;
-        pConfig->fWeaselLogToScreen = __cfgAttrSwitch( pScan->xmlNode,
-                                                       "screen" );
+        fNoError = __cfgReadCmdWeaselLogPipe( pConfig, pScan->xmlNode );
         break;
 
       case 9: // name-server
@@ -1413,26 +1623,31 @@ static PCONFIG _cfgNew(PSZ pszFile)
                      &pConfig->stNSAddr, &pConfig->usNSPort, FALSE, 53 );
         break;
 
-      case 10: // mail-server-name
+      case 10: // mail-server
+        fNoError = utilStrToInAddrPort( pScan->cbValue, pScan->pcValue,
+                     &pConfig->stMXAddr, &pConfig->usMXPort, FALSE, 25 );
+        break;
+
+      case 11: // mail-server-name
         fNoError = utilVerifyDomainName( pScan->cbValue, pScan->pcValue );
         if ( fNoError )
           pConfig->pszMailServerName = utilStrNewSZ( pScan->cbValue,
                                                      pScan->pcValue );
         break;
 
-      case 11: // local-domain
+      case 12: // local-domain
         fNoError = utilStrAddWords( &pConfig->cbLocalDomains,
                                     &pConfig->pcLocalDomains,
                                     pScan->cbValue, pScan->pcValue,
                                     NULL );
         break;
 
-      case 12: // spam-store
+      case 13: // spam-store
         pConfig->pszSpamStore = utilStrNewSZ( pScan->cbValue, pScan->pcValue );
         pConfig->fSpamTrapStore = __cfgAttrSwitch( pScan->xmlNode, "to-trap" );
         break;
 
-      case 13: // update-header
+      case 14: // update-header
         pConfig->fUpdateHeader = utilStrWordIndex( _CFG_SW_ON, pScan->cbValue,
                                                    pScan->pcValue ) != -1;
         pszAttr = xmlGetNoNsProp( pScan->xmlNode, "from-local" );
@@ -1440,46 +1655,46 @@ static PCONFIG _cfgNew(PSZ pszFile)
           ( utilStrWordIndex( _CFG_SW_ON, strlen( pszAttr ), pszAttr ) != -1 );
         break;
 
-      case 14: // command-timeout
+      case 15: // command-timeout
         fNoError = utilStrTimeToSec( pScan->cbValue, pScan->pcValue,
                                      &pConfig->ulCommandTimeout ) &&
                    ( pConfig->ulCommandTimeout >= _CFG_MIN_COMMAND_TIMEOUT ) &&
                    ( pConfig->ulCommandTimeout <= _CFG_MAX_COMMAND_TIMEOUT );
         break;
 
-      case 15: // uribl
+      case 16: // uribl
         fNoError = __cfgReadURIBL( pConfig, pScan->xmlNode );
         break;
 
-      case 16: // command-ataccept
+      case 17: // command-ataccept
         fNoError = __cfgReadCmdAtAccept( pConfig, pScan->xmlNode );
         break;
 
-      case 17: // command-ehlo
+      case 18: // command-ehlo
         fNoError = __cfgReadCmdEHLO( pConfig, pScan->xmlNode );
         break;
 
-      case 18: // command-rset
+      case 19: // command-rset
         fNoError = __cfgReadCmdRSET( pConfig, pScan->xmlNode );
         break;
 
-      case 19: // command-mail
+      case 20: // command-mail
         fNoError = __cfgReadCmdMAIL( pConfig, pScan->xmlNode );
         break;
 
-      case 20: // command-rcpt
+      case 21: // command-rcpt
         fNoError = __cfgReadCmdRCPT( pConfig, pScan->xmlNode );
         break;
 
-      case 21: // command-data
+      case 22: // command-data
         fNoError = __cfgReadCmdDATA( pConfig, pScan->xmlNode );
         break;
 
-      case 22: // command-atcontent
+      case 23: // command-atcontent
         fNoError = __cfgReadCmdAtContent( pConfig, pScan->xmlNode );
         break;
 
-      case 23: // command-quit
+      case 24: // command-quit
         fNoError = __cfgReadCmdQUIT( pConfig, pScan->xmlNode );
         break;
     }
@@ -1550,7 +1765,7 @@ BOOL cfgInit(PSZ pszFile)
     return FALSE;
   }
 
-  pszCfgFile = debugStrDup( pszFile );
+  pszCfgFile = hstrdup( pszFile );
 
   return TRUE;
 }
@@ -1566,9 +1781,10 @@ VOID cfgDone()
   rwmtxDone( &rwmtxConfig );
 
   _cfgFree( pConfig );
+  pConfig = NULL;
   if ( pszCfgFile != NULL )
   {
-    debugFree( pszCfgFile );
+    hfree( pszCfgFile );
     pszCfgFile = NULL;
   }
 }

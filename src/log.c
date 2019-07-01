@@ -7,7 +7,8 @@
 #include <string.h>
 #include "xpl.h"
 #include "config.h"
-#include "debug.h"
+#include "hmem.h"
+#include "debug.h"     // Must be the last.
 
 #define LOG_NAME                 "sf"
 #define BUFPSZ_RECORDS           8
@@ -51,8 +52,8 @@ static BOOL _logOpen()
   fdLog = fdNew;
 
   if ( pszLogPath != NULL )
-    debugFree( pszLogPath );
-  pszLogPath = debugStrDup( pConfig->pszLogPath );
+    hfree( pszLogPath );
+  pszLogPath = hstrdup( pConfig->pszLogPath );
 
   return TRUE;
 }
@@ -67,7 +68,7 @@ static VOID _logClose()
 
   if ( pszLogPath != NULL )
   {
-    debugFree( pszLogPath );
+    hfree( pszLogPath );
     pszLogPath = NULL;
   }
 }
@@ -158,7 +159,7 @@ VOID logDone()
 
   for( ulIdx = 0; ulIdx < BUFPSZ_RECORDS; ulIdx++ )
     if ( apszBufPSZ[ulIdx] != NULL )
-      debugFree( apszBufPSZ[ulIdx] );
+      hfree( apszBufPSZ[ulIdx] );
   bzero( apszBufPSZ, sizeof(apszBufPSZ) );
 }
 
@@ -237,7 +238,7 @@ PSZ logBufToPSZ(ULONG cbBuf, PCHAR pcBuf)
   if ( ( cbBuf == 0 ) || ( pcBuf == NULL ) )
     return "";
 
-  pszRecord = debugMAlloc( cbBuf + 1 );
+  pszRecord = hmalloc( cbBuf + 1 );
   if ( pszRecord == NULL )
   {
     debug( "Not enough memory" );
@@ -249,7 +250,7 @@ PSZ logBufToPSZ(ULONG cbBuf, PCHAR pcBuf)
   xplMutexLock( hmtxLog, XPL_INDEFINITE_WAIT );
 
   if ( apszBufPSZ[ulBufPSZPos] != NULL )
-    debugFree( apszBufPSZ[ulBufPSZPos] );
+    hfree( apszBufPSZ[ulBufPSZPos] );
 
   apszBufPSZ[ulBufPSZPos] = pszRecord;
   ulBufPSZPos = (ulBufPSZPos + 1) % BUFPSZ_RECORDS;

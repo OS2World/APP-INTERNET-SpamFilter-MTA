@@ -1,28 +1,43 @@
 // [Digi] Debug stuff.
 
 #include <time.h>
+#ifndef min
+#define min(a,b) (((a) < (b)) ? (a) : (b))
+#endif
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
+#include <malloc.h>
+#ifdef __WATCOMC__
+#include <process.h>
+#endif
+
+#include <types.h>
+#include <sys\socket.h>
+#include <unistd.h>
+
+#include <hmem.h>
+
 #define INCL_DOSSEMAPHORES
 #include <os2.h>
+#define DEBUG_C
 #include "debug.h"
 
 static HMTX		hMtx;
 
 typedef struct _DBGCOUNTER {
-  struct _DBGCOUNTER		*pNext;
-  char				*pcName;
-  int				iValue;
-  unsigned int			cInc;
-  unsigned int			cDec;
+  struct _DBGCOUNTER *pNext;
+  char               *pcName;
+  int                iValue;
+  unsigned int       cInc;
+  unsigned int       cDec;
 } DBGCOUNTER, *PDBGCOUNTER;
 
 typedef struct _BUFPSZ {
-  struct _BUFPSZ		*pNext;
-  struct _BUFPSZ		**ppSelf;
-  char				acString[1];
+  struct _BUFPSZ  *pNext;
+  struct _BUFPSZ  **ppSelf;
+  char            acString[1];
 } BUFPSZ, *PBUFPSZ;
 
 typedef struct _BUFPSZSEQ {
@@ -30,6 +45,13 @@ typedef struct _BUFPSZSEQ {
   PBUFPSZ		*ppLast;
   int			cBufPSZ;
 } BUFPSZSEQ, *PBUFPSZSEQ;
+
+#define MEMHDRFNLEN    32
+typedef struct _MEMBLKHDR {
+  char          acFile[MEMHDRFNLEN];
+  int           iLine;
+  size_t        cBytes;
+} MEMBLKHDR, *PMEMBLKHDR;
 
 static FILE		*fdDebug = NULL;
 static PDBGCOUNTER	pCounters = NULL;
@@ -102,9 +124,9 @@ void debug_write(char *pcFormat, ...)
   char		acBuf[32];
 
   t = time( NULL );
-  strftime( &acBuf, sizeof(acBuf)-1, "%T", localtime( &t ) );
+  strftime( acBuf, sizeof(acBuf)-1, "%T", localtime( &t ) );
   DEBUG_BEGIN
-  fprintf( fdDebug, "[%s] ", &acBuf );
+  fprintf( fdDebug, "[%s] ", acBuf );
   va_start( arglist, pcFormat ); 
   vfprintf( fdDebug, pcFormat, arglist );
   va_end( arglist );
@@ -161,7 +183,7 @@ char *debug_buf2psz(char *pcBuf, unsigned int cbBuf)
   lsBufPSZ.cBufPSZ++;
 
   DEBUG_END;
-  return &pBufPSZ->acString;
+  return pBufPSZ->acString;
 }
 
 void debug_textbuf(char *pcBuf, unsigned int cbBuf, int fCRLF)
@@ -176,8 +198,8 @@ void debug_textbuf(char *pcBuf, unsigned int cbBuf, int fCRLF)
 
 int debug_counter(char *pcName, int iDelta)
 {
-  PDBGCOUNTER		pScan;
-  int			iRes = 0;
+  PDBGCOUNTER   pScan;
+  int           iRes = 0;
 
   DEBUG_BEGIN_0
 
@@ -227,7 +249,9 @@ int debug_counter(char *pcName, int iDelta)
 
 void *debug_malloc(size_t size, char *pcFile, int iLine)
 {
-  void		*pBlock = malloc( size + sizeof(size_t) );
+  void		*pBlock = malloc( sizeof(MEMBLKHDR) + size );
+  int       cbFNPart, cbFile = strlen( pcFile );
+  char      acCounter[MEMHDRFNLEN + 8];
 
   if ( pBlock == NULL )
   {
@@ -235,10 +259,21 @@ void *debug_malloc(size_t size, char *pcFile, int iLine)
     return NULL;
   }
 
-  *((size_t *)pBlock) = size;
-  debug_counter( "mem_alloc", size );
+  cbFNPart = min( MEMHDRFNLEN - 1, cbFile );
 
-  return ((char *)pBlock) + sizeof(size_t);
+  strcpy( ((PMEMBLKHDR)pBlock)->acFile, &pcFile[cbFile - cbFNPart] );
+
+  ((PMEMBLKHDR)pBlock)->cBytes = size;
+  ((PMEMBLKHDR)pBlock)->iLine = iLine;
+  debug_counter( "$mem_alloc", size );
+
+  if ( _snprintf( acCounter, sizeof(acCounter), "%s#%u",
+                  ((PMEMBLKHDR)pBlock)->acFile, iLine ) == -1 )
+    debug( "Can't build a counter name" );
+  else
+    debug_counter( acCounter, size );
+
+  return ((char *)pBlock) + sizeof(MEMBLKHDR);
 }
 
 void *debug_calloc(size_t n, size_t size, char *pcFile, int iLine)
@@ -249,40 +284,58 @@ void *debug_calloc(size_t n, size_t size, char *pcFile, int iLine)
   pBlock = debug_malloc( size, pcFile, iLine );
   if ( pBlock != NULL )
     bzero( pBlock, size );
+
   return pBlock;
 }
 
-void debug_free(void *ptr)
+void debug_free(void *ptr, char *pcFile, int iLine)
 {
+  char       acCounter[MEMHDRFNLEN + 8];
+
   if ( ptr == NULL )
   {
-    debug_write( "debug_free() : Pointer is NULL\n" );
+    debug_write( "%s#%u : debug_free(): Pointer is NULL\n", pcFile, iLine );
     return;
   }
-  ptr = ((char *)ptr) - sizeof(size_t);
-  debug_counter( "mem_alloc", -(*((size_t *)ptr)) );
+
+  ptr = ((char *)ptr) - sizeof(MEMBLKHDR);
+  if ( ((PMEMBLKHDR)ptr)->cBytes == 0 )
+    debug( "%s#%u : debug_free(): It seems this block was not allocated!\n",
+           pcFile, iLine );;
+  debug_counter( "$mem_alloc", -((PMEMBLKHDR)ptr)->cBytes );
+
+  if ( _snprintf( acCounter, sizeof(acCounter), "%s#%u",
+                  ((PMEMBLKHDR)ptr)->acFile, ((PMEMBLKHDR)ptr)->iLine ) == -1 )
+    debug( "Can't build a counter name" );
+  else
+    debug_counter( acCounter, -((PMEMBLKHDR)ptr)->cBytes );
+
   free( ptr );
 }
 
-void *debug_realloc(void *old_blk, size_t size, char *pcFile, int iLine)
+void *debug_realloc(void *pMemOld, size_t size, char *pcFile, int iLine)
 {
-  size_t	old_size;
-  void		*pBlock = debug_malloc( size, pcFile, iLine );
+  void		   *pNewMem;
 
-  old_size = old_blk == NULL ? 0 : *(((size_t *)old_blk) - 1);
+  pNewMem = debug_malloc( size, pcFile, iLine );
 
-  if ( pBlock != NULL && old_blk != NULL )
-    memcpy( pBlock, old_blk, min( old_size, size ) );
+  if ( pMemOld != NULL )
+  {
+    size_t sizeOld = ((PMEMBLKHDR)((char *)pMemOld - sizeof(MEMBLKHDR)))->cBytes;
 
-  if ( ( size == 0 || pBlock != NULL ) && ( old_blk != NULL ) )
-    debug_free( old_blk );
+    if ( pNewMem != NULL )
+      memcpy( pNewMem, pMemOld, min( sizeOld, size ) );
 
-  return pBlock;
+    if ( ( size == 0 || pNewMem != NULL ) && ( pMemOld != NULL ) )
+      debug_free( pMemOld, pcFile, iLine );
+  }
+
+  return pNewMem;
 }
 
 char *debug_strdup(const char *src, char *pcFile, int iLine)
 {
-  char		*dst;
+  char		   *dst;
 
   if ( src == NULL )
     return NULL;
@@ -295,27 +348,260 @@ char *debug_strdup(const char *src, char *pcFile, int iLine)
 }
 
 
+void *debug_hmalloc(size_t size, char *pcFile, int iLine)
+{
+  void       *pBlock = hmalloc( sizeof(MEMBLKHDR) + size );
+  int        cbFNPart, cbFile = strlen( pcFile );
+  char       acCounter[MEMHDRFNLEN + 8];
+
+  if ( pBlock == NULL )
+  {
+    debug_write( "%s#%u : Not enough high memory\n", pcFile, iLine );
+    return NULL;
+  }
+
+  cbFNPart = min( MEMHDRFNLEN - 1, cbFile );
+
+  strcpy( ((PMEMBLKHDR)pBlock)->acFile, &pcFile[cbFile - cbFNPart] );
+
+  ((PMEMBLKHDR)pBlock)->cBytes = size;
+  ((PMEMBLKHDR)pBlock)->iLine = iLine;
+  debug_counter( "$hmem_alloc", size );
+
+  if ( _snprintf( acCounter, sizeof(acCounter), "%s:h#%u",
+                  ((PMEMBLKHDR)pBlock)->acFile, iLine ) == -1 )
+    debug( "Can't build a counter name" );
+  else
+    debug_counter( acCounter, size );
+
+  return ((char *)pBlock) + sizeof(MEMBLKHDR);
+}
+
+void *debug_hcalloc(size_t n, size_t size, char *pcFile, int iLine)
+{
+  void		*pBlock;
+
+  size *= n;
+  pBlock = debug_hmalloc( size, pcFile, iLine );
+  if ( pBlock != NULL )
+    bzero( pBlock, size );
+
+  return pBlock;
+}
+
+void debug_hfree(void *ptr, char *pcFile, int iLine)
+{
+  char       acCounter[MEMHDRFNLEN + 8];
+
+  if ( ptr == NULL )
+  {
+    debug_write( "%s#%u : debug_hfree(): Pointer is NULL\n", pcFile, iLine );
+    return;
+  }
+
+  ptr = ((char *)ptr) - sizeof(MEMBLKHDR);
+  if ( ((PMEMBLKHDR)ptr)->cBytes == 0 )
+    debug( "%s#%u : debug_hfree(): It seems this block was not allocated!\n",
+           pcFile, iLine );;
+  debug_counter( "$hmem_alloc", -((PMEMBLKHDR)ptr)->cBytes );
+
+  if ( _snprintf( acCounter, sizeof(acCounter), "%s:h#%u",
+                  ((PMEMBLKHDR)ptr)->acFile, ((PMEMBLKHDR)ptr)->iLine ) == -1 )
+    debug( "Can't build a counter name" );
+  else
+    debug_counter( acCounter, -((PMEMBLKHDR)ptr)->cBytes );
+
+  hfree( ptr );
+}
+
+void *debug_hrealloc(void *pMemOld, size_t size, char *pcFile, int iLine)
+{
+  void		   *pNewMem;
+
+  pNewMem = debug_hmalloc( size, pcFile, iLine );
+
+  if ( pMemOld != NULL )
+  {
+    size_t sizeOld = ((PMEMBLKHDR)((char *)pMemOld - sizeof(MEMBLKHDR)))->cBytes;
+
+    if ( pNewMem != NULL )
+      memcpy( pNewMem, pMemOld, min( sizeOld, size ) );
+
+    if ( ( size == 0 || pNewMem != NULL ) && ( pMemOld != NULL ) )
+      debug_hfree( pMemOld, pcFile, iLine );
+  }
+
+  return pNewMem;
+}
+
+char *debug_hstrdup(const char *src, char *pcFile, int iLine)
+{
+  char		   *dst;
+
+  if ( src == NULL )
+    return NULL;
+
+  dst = debug_hmalloc( strlen( src ) + 1, pcFile, iLine );
+  if ( dst != NULL )
+    strcpy( dst, src );
+
+  return dst;
+}
+
+
+int debug_socket(int domain, int type, int protocol)
+{
+  int        rc = socket( domain, type, protocol );
+
+  if ( rc != -1 )
+    debug_counter( "$sockets", DBGCNT_INC );
+
+  return rc;
+}
+
+int debug_accept(int s, void *name, int *namelen)
+{
+  int        rc = accept( s, (struct sockaddr *)name, namelen );
+
+  if ( rc != -1 )
+    debug_counter( "$sockets", DBGCNT_INC );
+
+  return rc;
+}
+
+int debug_soclose(int s)
+{
+  int        rc = soclose( s );
+
+  if ( rc != -1 )
+    debug_counter( "$sockets", DBGCNT_DEC );
+
+  return rc;
+}
+
+
+typedef struct _DEBUGTHREAD {
+  void (*fnThread)(void *);
+  void *pArg;
+} DEBUGTHREAD, *PDEBUGTHREAD;
+
+static void threadDebug(void *pArg)
+{
+  void (*fnRealThread)(void *) = ((PDEBUGTHREAD)pArg)->fnThread;
+  void *pRealArg               = ((PDEBUGTHREAD)pArg)->pArg;
+
+  free( pArg );
+  debug_counter( "$threads", DBGCNT_INC );
+  fnRealThread( (void *)pRealArg );
+  debug_counter( "$threads", DBGCNT_DEC );
+}
+
+int debug_beginthread(void (*start_address)(void *), void *stack_bottom,
+                      unsigned stack_size, void *arglist)
+{
+  PDEBUGTHREAD   pDbgThreadArg = malloc( sizeof(DEBUGTHREAD) );
+  int rc;
+
+  if ( pDbgThreadArg == NULL )
+    return -1;
+
+  pDbgThreadArg->fnThread = start_address;
+  pDbgThreadArg->pArg = arglist;
+  rc = _beginthread( threadDebug, stack_bottom, stack_size, pDbgThreadArg );
+  if ( rc == -1 )
+    free( pDbgThreadArg );
+
+  return rc;
+}
+
+void debug_endthread()
+{
+  debug_counter( "$threads", DBGCNT_DEC );
+  _endthread();
+}
+
+
+
+// debug_state()
+// Writes list of counters and values to the logfile.
+
+static int _counterComp(const void *pCnt1, const void *pCnt2)
+{
+  return strcmp( (*(PDBGCOUNTER *)pCnt1)->pcName,
+                 (*(PDBGCOUNTER *)pCnt2)->pcName );
+}
+
+static void _debugCounter(PDBGCOUNTER pCounter)
+{
+  debug_text( "%-25s %5u          %5u(%d)     %5d\n",
+              pCounter->pcName, pCounter->cInc, pCounter->cDec,
+              pCounter->cInc - pCounter->cDec, pCounter->iValue );
+}
+
 void DBGLIBENTRY debug_state()
 {
-  PDBGCOUNTER		pScan;
+  ULONG             ulCount = 0, ulIdx;
+  PDBGCOUNTER       pScan;
+  PDBGCOUNTER       *ppList;
 
   debug_write( "Debug counters:\n"
-               "Counter name\tIncr. times\tDecr. times\tValue\n" );
+               "Counter name            Incr. times     Decr. times     Value\n" );
 
+  DEBUG_BEGIN
+
+  // Allocalte stack for the sorted counters list.
   for( pScan = pCounters; pScan != NULL; pScan = pScan->pNext )
-    debug_text( "%-17s   %5u           %5u(%d)      %5d\n",
-             pScan->pcName, pScan->cInc, pScan->cDec,
-             pScan->cInc - pScan->cDec, pScan->iValue );
+    ulCount++;
+  ppList = alloca( sizeof(PDBGCOUNTER) * ulCount );
+
+  if ( ppList == NULL )
+  {
+    // Output unsorted list.
+    for( pScan = pCounters; pScan != NULL; pScan = pScan->pNext )
+      _debugCounter( pScan );
+    return;
+  }
+
+  // Fill list of counters.
+  for( pScan = pCounters, ulIdx = 0; ulIdx < ulCount;
+       pScan = pScan->pNext, ulIdx++ )
+    ppList[ulIdx] = pScan;
+  // Sort it...
+  qsort( ppList, ulCount, sizeof(PDBGCOUNTER), _counterComp );
+
+  // Output sorted list.
+  for( ulIdx = 0; ulIdx < ulCount; ulIdx++ )
+    _debugCounter( ppList[ulIdx] );
+
+  DEBUG_END
 }
 
 int debug_memused()
 {
   PDBGCOUNTER		pScan;
+  ULONG                 iValue = 0;
 
-  for( pScan = pCounters;
-       ( pScan != NULL ) && ( strcmp( "mem_alloc", pScan->pcName ) != 0 );
-       pScan = pScan->pNext )
-  { }
+  DEBUG_BEGIN_0
 
-  return pScan == NULL ? -1 : pScan->iValue;
+  for( pScan = pCounters; pScan != NULL; pScan = pScan->pNext )
+  {
+    if ( strcmp( "$mem_alloc", pScan->pcName ) == 0 )
+    {
+      iValue = pScan->iValue;
+      break;
+    }
+  }
+
+  for( pScan = pCounters; pScan != NULL; pScan = pScan->pNext )
+  {
+    if ( strcmp( "$hmem_alloc", pScan->pcName ) == 0 )
+    {
+      iValue += pScan->iValue;
+      break;
+    }
+  }
+
+  DEBUG_END
+
+  return iValue;
 }

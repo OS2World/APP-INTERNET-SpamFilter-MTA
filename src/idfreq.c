@@ -1,7 +1,9 @@
 #include <string.h>
-#include "debug.h"
 #include "util.h"
 #include "idfreq.h"
+#include <stdio.h>
+#include "hmem.h"
+#include "debug.h"     // Must be the last.
 
 typedef struct _IDREC {
   ULONG      ulId;
@@ -61,7 +63,7 @@ VOID idfrDone(PIDFREQ pIDFreq)
 
   if ( pIDFreq->paList != NULL )
   {
-    debugFree( pIDFreq->paList );
+    hfree( pIDFreq->paList );
     pIDFreq->paList = NULL;
   }
 }
@@ -103,7 +105,7 @@ BOOL idfrActivation(PIDFREQ pIDFreq, ULONG ulId, BOOL fRemoveOnLimit)
       if ( pIDFreq->cList == pIDFreq->ulListMax )
       {
         // Expand list.
-        paList = debugReAlloc( pIDFreq->paList,
+        paList = hrealloc( pIDFreq->paList,
                                (pIDFreq->ulListMax + 128) * sizeof(IDREC) );
 
         if ( paList == NULL )

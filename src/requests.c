@@ -10,14 +10,15 @@
 #include "log.h"
 #include "spf.h"
 #include "greylist.h"
-#include "sigqueue.h"
+#include "events.h"
 #include "mboxchk.h"
 #include "stat.h"
 #include "msgfile.h"
 #include "idfreq.h"
-#include "debug.h"
+#include "hmem.h"
 #define REQUESTS_C
 #include "requests.h"
+#include "debug.h"     // Must be the last.
 
 #define _WHITELIST_FILE          "whitelst.txt"
 #define _SPAM_URL_HOSTLIST_FILE  "spamlink.txt"
@@ -62,6 +63,7 @@ static HMTX            hmtxSessCmd = NULLHANDLE;
 static HEV             hevSessCmd = NULLHANDLE;
 static ULONG           cThreads = 0;
 static IDFREQ          idfreqClients = { 0 };
+static IDFREQ          idfreqAuthFail = { 0 };
 
 // Internal dynamic ip-addresses list of SMTP-clients.
 static PDYNIPREC       pDynIPList = NULL;
@@ -96,12 +98,18 @@ static VOID _reqAnswer(PFNREQCB pfnCallback, PVOID pUser, ULONG ulAnswer,
   if ( pfnCallback == NULL )
     return;
 
+  if ( ulAnswer >= ARRAY_SIZE(apszReqAnswerResuts) )
+  {
+    debug( "Invalid answer number: %lu", ulAnswer );
+    return;
+  }
+
   pcBuf += sprintf( pcBuf, "%s: ", apszReqAnswerResuts[ulAnswer] );
 
   if ( pszFormat != NULL )
   {
     va_start( arglist, pszFormat );
-    cBytes = vsnprintf( pcBuf, sizeof(acBuf) - (pcBuf - &acBuf) - 4,
+    cBytes = vsnprintf( pcBuf, sizeof(acBuf) - (pcBuf - &acBuf[0]) - 4,
                         pszFormat, arglist );
     va_end( arglist );
 
@@ -118,7 +126,7 @@ static VOID _reqAnswer(PFNREQCB pfnCallback, PVOID pUser, ULONG ulAnswer,
   }
 
   *((PUSHORT)pcBuf) = (USHORT)'\n\r';
-  pfnCallback( pUser, (pcBuf - &acBuf) + 2, &acBuf );
+  pfnCallback( pUser, (pcBuf - &acBuf) + 2, acBuf );
 }
 
 static VOID _sessCmdAnswer(PSESS pSess, PSESSCMD pSessCmd, ULONG ulAnswer,
@@ -126,7 +134,7 @@ static VOID _sessCmdAnswer(PSESS pSess, PSESSCMD pSessCmd, ULONG ulAnswer,
 {
   va_list    arglist;
   CHAR       acBuf[512];
-  PCHAR      pcBuf = &acBuf, pcEnd = &acBuf[sizeof(acBuf)];
+  PCHAR      pcBuf = acBuf, pcEnd = &acBuf[sizeof(acBuf)];
 
   if ( sessIsCommandTimeout( pSess ) )
   {
@@ -174,9 +182,8 @@ static VOID _sessCmdAnswer(PSESS pSess, PSESSCMD pSessCmd, ULONG ulAnswer,
 
   // Make "final" log record for the session.
 
-  pcBuf += sprintf( &acBuf,
-                    "[INFO] Answer: %s, id: %s, client: [%s]",
-                    apszReqAnswerResuts[ulAnswer], &pSess->acId,
+  pcBuf += sprintf( acBuf, "[INFO] Answer: %s, id: %s, client: [%s]",
+                    apszReqAnswerResuts[ulAnswer], pSess->acId,
                     inet_ntoa( pSess->stInAddr ) );
   if ( pSess->pszHostName != NULL )
     pcBuf += sprintf( pcBuf, " %s", pSess->pszHostName );
@@ -202,7 +209,7 @@ static VOID _sessCmdAnswer(PSESS pSess, PSESSCMD pSessCmd, ULONG ulAnswer,
       }
     }
   }
-  log( 1, &acBuf );
+  log( 1, acBuf );
 }
 
 
@@ -430,7 +437,7 @@ static VOID _dynipDone()
 {
   if ( pDynIPList != NULL )
   {
-    debugFree( pDynIPList );
+    hfree( pDynIPList );
     pDynIPList = NULL;
   }
 
@@ -457,7 +464,7 @@ static VOID _dynipSet(struct in_addr stInAddr, LONG lScore, ULONG ulLifeTime)
   PDYNIPREC  pDynIPRec;
   ULONG      ulIndex;
   time_t     timeExpire = lScore == SF_SCORE_NONE ?
-                            0 : time( NULL ) + ulLifeTime;
+                            0 : ( time( NULL ) + ulLifeTime );
 
   xplMutexLock( hmtxDynIPList, XPL_INDEFINITE_WAIT );
 
@@ -472,7 +479,7 @@ static VOID _dynipSet(struct in_addr stInAddr, LONG lScore, ULONG ulLifeTime)
 
     if ( cDynIPList == ulMaxDynIPList )
     {
-      PDYNIPREC        pNewList = debugReAlloc( pDynIPList,
+      PDYNIPREC        pNewList = hrealloc( pDynIPList,
                                      sizeof(DYNIPREC) * (cDynIPList + 16) );
       if ( pNewList == NULL )
       {
@@ -537,7 +544,7 @@ static VOID _dynipSet(struct in_addr stInAddr, LONG lScore, ULONG ulLifeTime)
 // LONG _dynipCheck(struct in_addr stInAddr)
 //
 // Returns score for the given address or SF_SCORE_NONE if address not listed.
-// The lifetime of listed address prolongs.
+// [The lifetime of listed address prolongs.]
 
 static LONG _dynipCheck(struct in_addr stInAddr)
 {
@@ -604,8 +611,8 @@ static BOOL _sCheckEHLO(PSESS pSess,
   PSZ              pszMXName;
 
   // Compare EHLO with client's host.
-  debug( "EHLO host name: %s, client host: %s",
-         pSess->pszEHLO, STR_SAFE( pSess->pszHostName ) );
+/*  debug( "EHLO host name: %s, client host: %s",
+         pSess->pszEHLO, STR_SAFE( pSess->pszHostName ) );*/
   if ( // Compare EHLO string with client's host name.
        ( STR_ICMP( pSess->pszEHLO, pSess->pszHostName ) == 0 ) ||
        // IP-address in EHLO - compare with client's IP-address.
@@ -619,17 +626,19 @@ static BOOL _sCheckEHLO(PSESS pSess,
   // Let's try to get IP for EHLO host name and compare it with
   // client's IP-address.
 
-  debug( "Resolv EHLO %s...", pSess->pszEHLO );
+//  debug( "Resolv EHLO %s...", pSess->pszEHLO );
   ulRC = dnsRequest( DNSREC_TYPE_A, pSess->pszEHLO, sizeof(aARes),
                      (PCHAR)&aARes, &cARes );
   if ( ulRC == DNS_CANCEL )
     return FALSE;
 
   if ( ulRC != DNS_NOERROR )
-    debug( "dnsRequest(), rc = %u", ulRC );
+  {
+//    debug( "dnsRequest(), rc = %u", ulRC );
+  }
   else
   {
-    debug( "DNS answers: %u", cARes );
+//    debug( "DNS answers: %u", cARes );
     for( ulIdx = 0; ulIdx < cARes; ulIdx++ )
       if ( aARes[ulIdx].s_addr == pSess->stInAddr.s_addr )
         return TRUE;
@@ -1010,6 +1019,9 @@ static BOOL _sSaveAndClose(PSESS pSess, PMSGFILE pFile, PSZ pszFileName)
     pszAddr += sprintf( pszAddr, "; trap=%s", pSess->pszSpamTrap );
   if ( pSess->ulSPFLevel != ~0 )
     pszAddr += sprintf( pszAddr, "; spf=%s", apszSPFResult[pSess->ulSPFLevel] );
+  if ( pSess->pszEHLO != NULL )
+    pszAddr += _snprintf( pszAddr, pszAddr - &acBuf, "; helo=%s",
+                          pSess->pszEHLO );
   mfSetHeader( pFile, "X-SF", &acBuf );
 
   fSaved = mfStore( pFile, pszFileName );
@@ -1022,7 +1034,7 @@ static VOID _sOnRSET(PSESS pSess)
 {
   if ( pSess->pszSender != NULL )
   {
-    debugFree( pSess->pszSender );
+    hfree( pSess->pszSender );
     pSess->pszSender = NULL;
   }
   sessClearRecepient( pSess );
@@ -1031,7 +1043,7 @@ static VOID _sOnRSET(PSESS pSess)
   pSess->ulRWLLevel = 0;
   if ( pSess->pszSpamTrap != NULL )
   {
-    debugFree( pSess->pszSpamTrap );
+    hfree( pSess->pszSpamTrap );
     pSess->pszSpamTrap = NULL;
   }
   pSess->ulSPFLevel = ~0;
@@ -1047,13 +1059,13 @@ static ULONG _sCheckOnAtAccept(PSESS pSess, struct in_addr stInAddr, PSZ pszHost
   // Set host name.
 
   if ( pSess->pszHostName != NULL )
-    debugFree( pSess->pszHostName );
+    hfree( pSess->pszHostName );
 
   if ( pszHostName != NULL )
   {
     // Host name specified: same as IP - has no PTR, other - host name.
     pSess->pszHostName = inet_addr( pszHostName ) == stInAddr.s_addr
-                           ? NULL : debugStrDup( pszHostName );
+                           ? NULL : hstrdup( pszHostName );
   }
   else
   {
@@ -1073,7 +1085,7 @@ static ULONG _sCheckOnAtAccept(PSESS pSess, struct in_addr stInAddr, PSZ pszHost
     {
       debug( "PTR-record for %s found: %s",
              inet_ntoa( pSess->stInAddr ), &acPTRRes );
-      pSess->pszHostName = debugStrDup( &acPTRRes );
+      pSess->pszHostName = hstrdup( &acPTRRes );
     }
   }
 
@@ -1106,7 +1118,7 @@ static ULONG _sCheckOnAtAccept(PSESS pSess, struct in_addr stInAddr, PSZ pszHost
   else if ( (pSess->ulClentFlags & FL_LOCAL_CLIENT) == 0 &&
             // Scoring address by internal dynamic ip-address list.
             !sessAddScore( pSess, _dynipCheck( pSess->stInAddr ),
-                      "IP-addres [%s] was found in the dynamic ip-address list.",
+                      "IP-address [%s] was found in the dynamic ip-address list.",
                       inet_ntoa( pSess->stInAddr ) ) )
   {
     if ( // Check the frequency limit.
@@ -1147,7 +1159,7 @@ static ULONG _sCheckOnAtAccept(PSESS pSess, struct in_addr stInAddr, PSZ pszHost
 
 static ULONG _sCheckOnMAILFROM(PSESS pSess, ULONG cbFrom, PCHAR pcFrom)
 {
-  ULONG      cbDomain, cbSender;
+  ULONG      cbDomain;
   PCHAR      pcDomain;
   LONG       lScore;
 
@@ -1169,8 +1181,7 @@ static ULONG _sCheckOnMAILFROM(PSESS pSess, ULONG cbFrom, PCHAR pcFrom)
 
   if ( pSess->pszSender != NULL )
   {
-    cbSender = strlen( pSess->pszSender );
-    pcDomain = utilEMailDomain( cbSender, pSess->pszSender, &cbDomain );
+    pcDomain = utilEMailDomain( -1, pSess->pszSender, &cbDomain );
     if ( pcDomain == NULL )
     {
       sessAddScore( pSess, SF_SCORE_SPAM, "Malformed MAIL FROM address: <%s>.",
@@ -1225,7 +1236,7 @@ static ULONG _sCheckOnMAILFROM(PSESS pSess, ULONG cbFrom, PCHAR pcFrom)
 
       if ( ( pSess->ulRWLLevel != 0 ) &&
            sessAddScore( pSess, pConfig->alScoreRWL[pSess->ulRWLLevel - 1],
-                         "IP-addres %s was found in RWL (level %u).",
+                         "IP-address %s was found in RWL (level %u).",
                          inet_ntoa( pSess->stInAddr ), pSess->ulRWLLevel ) )
         break;
     }
@@ -1347,10 +1358,9 @@ static ULONG _sCheckOnDATA(PSESS pSess)
     for( ulIdx = 0; ulIdx < pSess->cRcpt; ulIdx++ )
     {
       pszAddr = pSess->ppszRcpt[ulIdx];
-      cbAddr = strlen( pszAddr );
 
       // Detect local recepient.
-      pcDomain = utilEMailDomain( cbAddr, pszAddr, &cbDomain );
+      pcDomain = utilEMailDomain( -1, pszAddr, &cbDomain );
       if ( ( pcDomain != NULL ) &&
            !cfgIsLocalEMailDomain( cbDomain, pcDomain ) )
       {
@@ -1366,7 +1376,7 @@ static ULONG _sCheckOnDATA(PSESS pSess)
 
   if ( pSess->pszSpamTrap != NULL )
   {
-    debugFree( pSess->pszSpamTrap );
+    hfree( pSess->pszSpamTrap );
     pSess->pszSpamTrap = NULL;
   }
 
@@ -1411,25 +1421,47 @@ static ULONG _sCheckOnDATA(PSESS pSess)
     if ( (pSess->ulClentFlags & FL_LOCAL_CLIENT) == 0 )
     {
       // Sender is local user and connected not from local network.
+      // Check recepients...
       for( ulIdx = 0; ulIdx < pSess->cRcpt; ulIdx++ )
       {
         pszAddr = pSess->ppszRcpt[ulIdx];
-        cbAddr = strlen( pszAddr );
 
         // Detect local recepient.
-        pcDomain = utilEMailDomain( cbAddr, pszAddr, &cbDomain );
+        pcDomain = utilEMailDomain( -1, pszAddr, &cbDomain );
         if ( ( pcDomain != NULL ) &&
              cfgIsLocalEMailDomain( cbDomain, pcDomain ) )
         {
-          // Local sender and local recepient but sender connected not from
-          // the local network.
-          sessAddScore( pSess, pConfig->lScoreExtClntLocSndrLocRcpt,
-                        "Sender <%s> and recepient <%s> are local but client "
-                        "[%s] is not local", STR_SAFE( pSess->pszSender ),
-                        pszAddr, inet_ntoa( pSess->stInAddr ) );
-          break;
+          // Recepient is local. Check the existence of the local sender.
+          if ( ( pConfig->usMXPort != 0 ) &&
+               ( pConfig->lScoreNonexistentLocSndr != 0 ) &&
+               ( MailBoxCheck( pConfig->stMXAddr, pConfig->usMXPort,
+                               pSess->pszSender, FALSE ) ==
+                   MBC_DONE_NOT_EXIST ) )
+          {
+            sessAddScore( pSess, pConfig->lScoreNonexistentLocSndr,
+                          "Sender <%s> (nonexistent) and recepient <%s> are "
+                          "local but client [%s] is not local",
+                          STR_SAFE( pSess->pszSender ),
+                          pszAddr, inet_ntoa( pSess->stInAddr ) );
+
+            if ( pConfig->ulExpirationClientNonexistentLocSndr != 0 )
+            {
+              _dynipSet( pSess->stInAddr,
+                         pConfig->lScoreClientNonexistentLocSndr,
+                         pConfig->ulExpirationClientNonexistentLocSndr );
+            }
+          }
+          else
+            // Local sender and local recepient but sender connected not from
+            // the local network.
+            sessAddScore( pSess, pConfig->lScoreExtClntLocSndrLocRcpt,
+                          "Sender <%s> and recepient <%s> are local but client"
+                          " [%s] is not local", STR_SAFE( pSess->pszSender ),
+                          pszAddr, inet_ntoa( pSess->stInAddr ) );
+
+          break;       // No need to look for other local recipients.
         }
-      }
+      }  // for( ulIdx ...
     } // if ( (pSess->ulClentFlags & FL_LOCAL_CLIENT) == 0 )
 
     // Do not other checks when sender is local user.
@@ -1476,8 +1508,7 @@ static ULONG _sCheckOnDATA(PSESS pSess)
     {
       // Check sender.
 
-      pcDomain = utilEMailDomain( STR_LEN( pSess->pszSender ), pSess->pszSender,
-                                  &cbDomain );
+      pcDomain = utilEMailDomain( -1, pSess->pszSender, &cbDomain );
       if ( ( pcDomain != NULL ) && pConfig->fMailBoxCheck )
       {
         if ( sessClientListed( pSess, &pConfig->lsMailBoxCheckIgnore ) )
@@ -1584,7 +1615,8 @@ static ULONG _sCheckOnDATA(PSESS pSess)
                 cARes = 10;
               for( cARes--; (cARes >= 0) && (ulChkRC >= MBC_FAIL); cARes-- )
               {
-                ulChkRC = MailBoxCheck( aARes[cARes], pSess->pszSender );
+                ulChkRC = MailBoxCheck( aARes[cARes], 0, pSess->pszSender,
+                                        TRUE );
                 if ( sessIsCommandTimeout( pSess ) )
                   return REQ_ANSWER_ERROR;
               }
@@ -1593,7 +1625,8 @@ static ULONG _sCheckOnDATA(PSESS pSess)
           else
             // Sender domain part is an ip-address in square brackets.
             ulChkRC = utilStrToInAddr( cbDomain - 2, &pcDomain[1], &aARes[0] )
-                        ? MailBoxCheck( aARes[0], pSess->pszSender ) : MBC_FAIL;
+                        ? MailBoxCheck( aARes[0], 0, pSess->pszSender, TRUE )
+                        : MBC_FAIL;
 
           if ( sessAddScore( pSess, pConfig->alScoreMailBoxCheck[ulChkRC],
                              "Mailbox %s checking result: %s.",
@@ -1791,8 +1824,7 @@ static BOOL _scAtAccept(PSESS pSess, PSESSCMD pSessCmd)
 
   if ( !utilStrToInAddr( cbIP, pcIP, &stInAddr ) )
   {
-    _sessCmdAnswer( pSess, pSessCmd, REQ_ANSWER_ERROR,
-                    "Invalid IP-address" );
+    _sessCmdAnswer( pSess, pSessCmd, REQ_ANSWER_ERROR, "Invalid IP-address" );
     return FALSE;
   }
 
@@ -1817,12 +1849,12 @@ static BOOL _scAtAccept(PSESS pSess, PSESSCMD pSessCmd)
   _sOnRSET( pSess );
   if ( pSess->pszHostName != NULL )
   {
-    debugFree( pSess->pszHostName );
+    hfree( pSess->pszHostName );
     pSess->pszHostName = NULL;
   }
   if ( pSess->pszEHLO != NULL )
   {
-    debugFree( pSess->pszEHLO );
+    hfree( pSess->pszEHLO );
     pSess->pszEHLO = NULL;
   }
 
@@ -1859,7 +1891,7 @@ static BOOL _scEHLO(PSESS pSess, PSESSCMD pSessCmd)
   }
 
   if ( pSess->pszEHLO != NULL )
-    debugFree( pSess->pszEHLO );
+    hfree( pSess->pszEHLO );
 
   sessLog( pSess, 5, SESS_LOG_INFO, "EHLO: %s", pcArg );
 
@@ -2001,11 +2033,11 @@ static BOOL _scAtContent(PSESS pSess, PSESSCMD pSessCmd)
   pFile = mfOpen( &pSessCmd->acArg );
   if ( pFile == NULL )
   {
-    sessLog( pSess, 1, SESS_LOG_ERROR, "Cannot open message file: %s.",
+    sessLog( pSess, 1, SESS_LOG_ERROR, "Cannot open message file: %s",
              &pSessCmd->acArg );
 //    ulAnswer = REQ_ANSWER_ERROR;
     _sessCmdAnswer( pSess, pSessCmd, REQ_ANSWER_ERROR,
-                    "Cannot open message file: %s.", &pSessCmd->acArg );
+                    "Cannot open message file: %s", &pSessCmd->acArg );
     _sOnRSET( pSess );
     return TRUE;
   }
@@ -2013,8 +2045,12 @@ static BOOL _scAtContent(PSESS pSess, PSESSCMD pSessCmd)
   {
     ulAnswer = _sCheckOnAtContent( pSess, pFile );
 
-    if ( ( ulAnswer == REQ_ANSWER_OK ) && pConfig->fUpdateHeader )
+    if ( ( ulAnswer == REQ_ANSWER_OK ) && pConfig->fUpdateHeader &&
+         ( pConfig->fUpdateHeaderLocal ||
+           (pSess->ulClentFlags & FL_LOCAL_SENDER) == 0 ) )
     {
+      // Add X-SF field to the header.
+
       PCHAR  pcPathEnd;
       BOOL   fSaved;
 
@@ -2092,7 +2128,7 @@ static VOID _sessCmdDestroy(PSESSCMD pSessCmd)
     debugCP( "We should not be here" );
   }
 
-  debugFree( pSessCmd );
+  hfree( pSessCmd );
 }
 
 // static VOID _sessCmdPush(PFNREQCB pfnCallback, PVOID pUser, PSZ pszSessId,
@@ -2104,7 +2140,14 @@ static VOID _sessCmdDestroy(PSESSCMD pSessCmd)
 static VOID _sessCmdPush(PFNREQCB pfnCallback, PVOID pUser, PSZ pszSessId,
                          ULONG ulCommandNo, ULONG cbArg, PCHAR pcArg)
 {
-  PSESSCMD             pSessCmd = debugMAlloc( sizeof(SESSCMD) + cbArg );
+  PSESSCMD             pSessCmd = hmalloc( sizeof(SESSCMD) + cbArg );
+
+  if ( pSessCmd == NULL )
+  {
+    debugCP( "Not enough memory" );
+    _reqAnswer( pfnCallback, pUser, REQ_ANSWER_ERROR, "Not enough memory" );
+    return;
+  }
 
   pSessCmd->pfnCallback = pfnCallback;
   pSessCmd->pUser = pUser;
@@ -2142,11 +2185,14 @@ static VOID _sessCmdProcess(PSESSCMD pSessCmd, BOOL fExecute)
 
   if ( pSess == NULL )
   {
+    debug( "sessOpen() failed. Session Id: %s, command N: %lu",
+           pSessCmd->acSessId, pSessCmd->ulCommandNo );
     _reqAnswer( pSessCmd->pfnCallback, pSessCmd->pUser, REQ_ANSWER_ERROR,
                 "Cannot open/create session" );
   }
   else if ( !fExecute )
   {
+    debugCP( "Shutdown..." );
     _reqAnswer( pSessCmd->pfnCallback, pSessCmd->pUser, REQ_ANSWER_ERROR,
                 "Shutdown" );
     sessClose( pSess );
@@ -2243,6 +2289,8 @@ BOOL reqInit()
 
   if ( ( hmtxSessCmd != NULLHANDLE ) &&
        ( hevSessCmd != NULLHANDLE ) &&
+       idfrInit( &idfreqAuthFail, pConfig->ulAuthFailFreqDuration,
+                 pConfig->ulAuthFailFreqMax ) &&
        idfrInit( &idfreqClients, pConfig->ulIPFreqDuration,
                  pConfig->ulIPFreqMaxAtAcceptNum ) &&
        _dynipInit() &&
@@ -2279,6 +2327,7 @@ BOOL reqInit()
     hevSessCmd = NULLHANDLE;
   }
 
+  idfrDone( &idfreqAuthFail );
   idfrDone( &idfreqClients );
   _dynipDone();
   addrlstDone( &stWhiteAddrList );
@@ -2330,11 +2379,12 @@ VOID reqDone()
     _sessCmdProcess( pSessCmd, FALSE );
   }
 
-  if ( pConfig->ulIPFreqMaxAtAcceptNum != 0 )
-  {
-    idfrDone( &idfreqClients );
-    bzero( &idfreqClients, sizeof(idfreqClients) );
-  }
+  idfrDone( &idfreqAuthFail );
+  bzero( &idfreqAuthFail, sizeof(idfreqAuthFail) );
+
+  idfrDone( &idfreqClients );
+  bzero( &idfreqClients, sizeof(idfreqClients) );
+
   _dynipDone();
   addrlstDone( &stWhiteAddrList );
   addrlstDone( &stSpamURIHostList );
@@ -2401,12 +2451,17 @@ BOOL reqNew(ULONG cbText, PCHAR pcText, PFNREQCB pfnCallback, PVOID pUser)
 
     case 1:  // SHUTDOWN
       log( 1, "The request SHUTDOWN received." );
+      _reqAnswer( pfnCallback, pUser,
+                  evPost( EV_SHUTDOWN ) ? REQ_ANSWER_OK : REQ_ANSWER_ERROR,
+                  NULL );
+      break;
 
     case 2:  // RECONFIGURE
-      _reqAnswer( pfnCallback, pUser,
-                  sqPost( lRequest == 1 ? SIG_SHUTDOWN : SIG_RECONFIGURE )
-                    ? REQ_ANSWER_OK : REQ_ANSWER_ERROR,
-                  NULL );
+      if ( !reqReconfigure() )
+        _reqAnswer( pfnCallback, pUser, REQ_ANSWER_ERROR,
+                    "Have errors, see logfile" );
+      else
+        _reqAnswer( pfnCallback, pUser, REQ_ANSWER_OK, NULL );
       break;
 
     case 3:  // DEBUGSTAT
@@ -2445,8 +2500,8 @@ VOID reqClean()
   // Expired hosts from spammers messages links cleaning.
   addrlstClean( &stSpamURIHostList );
 
-  if ( pConfig->ulIPFreqMaxAtAcceptNum != 0 )
-    idfrClean( &idfreqClients );
+  idfrClean( &idfreqAuthFail );
+  idfrClean( &idfreqClients );
 }
 
 VOID reqStoreLists()
@@ -2492,20 +2547,53 @@ VOID reqCloseSession(PSZ pszSessId)
   if ( lIdx != -1 )
     _sessCmdPush( NULL, NULL, pszSessId, lIdx, 0, NULL );
   else
-    debug( "Index of the command \"QUIT\" was not found." );
+    debug( "Index of the command \"QUIT\" was not found" );
 }
 
-VOID reqReconfigured()
+VOID reqSessionAuthFail(PSZ pszSessId)
 {
-  if ( !cfgReadLock() )
+  struct in_addr       stInAddr;
+
+  if ( !sessGetInaddr( pszSessId, &stInAddr ) )
   {
-    debug( "cfgReadLock() failed" );
+    debug( "Session %s does not exist", pszSessId );
     return;
   }
 
+  if ( idfrActivation( &idfreqAuthFail, stInAddr.s_addr, 
+                       pConfig->ulAuthFailFreqExpiration != 0 ) )
+  {
+    CHAR     acTime[32];
+
+    _dynipSet( stInAddr, SF_SCORE_SPAM, pConfig->ulAuthFailFreqExpiration );
+
+    statChange( STAT_AUTHFAIL_BLOCK, 1 );
+
+    utilSecToStrTime( pConfig->ulAuthFailFreqExpiration,
+                      sizeof(acTime), acTime );
+    log( 3, "[INFO] IP address %s blocked for %s (too many failed login attempts).",
+         inet_ntoa( stInAddr ), acTime );
+  }
+}
+
+BOOL reqReconfigure()
+{
+  if ( !cfgReconfigure() )
+    return FALSE;
+
+  if ( !cfgReadLock() )
+  {
+    debug( "cfgReadLock() failed" );
+    return FALSE;
+  }
+
+  idfrSetLimit( &idfreqAuthFail, pConfig->ulAuthFailFreqDuration,
+                pConfig->ulAuthFailFreqMax );
   idfrSetLimit( &idfreqClients, pConfig->ulIPFreqDuration,
                 pConfig->ulIPFreqMaxAtAcceptNum );
   sessSetCommandTimeout( pConfig->ulCommandTimeout );
 
   cfgReadUnlock();
+
+  return TRUE;
 }

@@ -1,6 +1,5 @@
 #include <string.h>
 #include <stdarg.h>
-#include "debug.h"
 #include "sf.h"
 #include "xpl.h"
 #include "config.h"
@@ -8,8 +7,10 @@
 #include "util.h"
 #include "stat.h"
 #include "sockets.h"
+#include "hmem.h"
 #define SESSIONS_C
 #include "sessions.h"
+#include "debug.h"     // Must be the last.
 
 static LINKSEQ         lsSessions;
 static HMTX            hmtxSessions;
@@ -29,20 +30,20 @@ static PSZ             apszTypes[] =
 static VOID _sessDestroy(PSESS pSess)
 {
   if ( pSess->pszHostName != NULL )
-    debugFree( pSess->pszHostName );
+    hfree( pSess->pszHostName );
 
   if ( pSess->pszEHLO != NULL )
-    debugFree( pSess->pszEHLO );
+    hfree( pSess->pszEHLO );
 
   if ( pSess->pszSender != NULL )
-    debugFree( pSess->pszSender );
+    hfree( pSess->pszSender );
 
   sessClearRecepient( pSess );
 
   if ( pSess->pszSpamTrap != NULL )
-    debugFree( pSess->pszSpamTrap );
+    hfree( pSess->pszSpamTrap );
 
-  debugFree( pSess );
+  hfree( pSess );
 }
 
 static PSESS _sessFind(PSZ pszId)
@@ -178,7 +179,8 @@ PSESS sessOpen(PSZ pszId, ULONG ulCommandNo)
   {
     if ( lockFlag0( &pSess->ulFlags ) == 0 )
     {
-      debug( "Session %s already open and locked!", pszId );
+      debug( "Session %s already open and locked (command N: %lu)!",
+             pszId, pSess->ulCommandNo );
       xplMutexUnlock( hmtxSessions );
       return NULL;
     }
@@ -188,10 +190,10 @@ PSESS sessOpen(PSZ pszId, ULONG ulCommandNo)
   else
   {
     // Allocate a new session record and insert it into the list.
-    pSess = debugCAlloc( 1, sizeof(SESS) );
+    pSess = hcalloc( 1, sizeof(SESS) );
     if ( pSess == NULL )
     {
-      debug( "Not enough memory" );
+      debugCP( "Not enough memory" );
       xplMutexUnlock( hmtxSessions );
       return NULL;
     }
@@ -286,11 +288,11 @@ VOID sessAddRecepient(PSESS pSess, ULONG cbAddr, PCHAR pcAddr)
   // Expand array for every 16 records.
   if ( (pSess->cRcpt & 0x0F) == 0 )
   {
-    PSZ      *ppszNew = debugReAlloc( pSess->ppszRcpt,
+    PSZ      *ppszNew = hrealloc( pSess->ppszRcpt,
                                       sizeof(PSZ) * (pSess->cRcpt + 0x10) );
     if ( ppszNew == NULL )
     {
-      debugFree( pszAddr );
+      hfree( pszAddr );
       debug( "Not enough memory" );
       return;
     }
@@ -310,10 +312,10 @@ VOID sessClearRecepient(PSESS pSess)
     for( ulIdx = 0; ulIdx < pSess->cRcpt; ulIdx++ )
     {
       if ( pSess->ppszRcpt[ulIdx] != NULL )
-        debugFree( pSess->ppszRcpt[ulIdx] );
+        hfree( pSess->ppszRcpt[ulIdx] );
     }
 
-    debugFree( pSess->ppszRcpt );
+    hfree( pSess->ppszRcpt );
     pSess->ppszRcpt = NULL;
   }
   pSess->cRcpt = 0;
@@ -386,6 +388,33 @@ BOOL sessClientListed(PSESS pSess, PLINKSEQ plsHostList)
   return cfgHostListCheck( plsHostList, pSess->stInAddr,
                            strlen( pSess->pszHostName ), pSess->pszHostName,
                            NULL );
+}
+
+BOOL sessGetInaddr(PSZ pszId, struct in_addr *pInAddr)
+{
+  PSESS      pSess;
+  BOOL       fRes;
+
+  if ( xplMutexLock( hmtxSessions, XPL_INDEFINITE_WAIT ) != XPL_NO_ERROR )
+  {
+    debug( "Mutex lock failed" );
+    return FALSE;
+  }
+
+  pSess = _sessFind( pszId );
+  if ( ( pSess != NULL ) && ( pSess->stInAddr.s_addr != 0 ) )
+  {
+    if ( pInAddr != NULL )
+      *pInAddr = pSess->stInAddr;
+
+    fRes = TRUE;
+  }
+  else
+    fRes = FALSE;
+
+  xplMutexUnlock( hmtxSessions );
+
+  return fRes;
 }
 
 ULONG sessCount()

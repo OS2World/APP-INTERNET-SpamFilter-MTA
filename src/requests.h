@@ -25,6 +25,7 @@ VOID reqStoreLists();
 ULONG reqGetCount();
 ULONG reqDynIPGetCount();
 VOID reqCloseSession(PSZ pszSessId);
-VOID reqReconfigured();
+VOID reqSessionAuthFail(PSZ pszSessId);
+BOOL reqReconfigure();
 
 #endif // REQUESTS_H

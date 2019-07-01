@@ -1,4 +1,3 @@
-#include "debug.h"
 #include <string.h>
 #include <stdio.h>
 #include <malloc.h>
@@ -7,6 +6,8 @@
 #include "dns.h"
 #include "util.h"
 #include "linkseq.h"
+#include "hmem.h"
+#include "debug.h"     // Must be the last.
 
 //Check result names (index - spfCheckHost() return code).
 PSZ apszSPFResult[7] = { "None", "Neutral", "Pass", "Fail", "SoftFail",
@@ -592,7 +593,7 @@ static ULONG _checkHost(PCHECKDATA pData, PSZ pszDomain)
         pcDomainSpec = pszDomain;
       }
 
-      pMechanism = debugMAlloc( sizeof(MECHANISM) - 1 + cbDomainSpec );
+      pMechanism = hmalloc( sizeof(MECHANISM) - 1 + cbDomainSpec );
       if ( pMechanism == NULL )
       {
         debug( "Not enough memory" );
@@ -628,7 +629,7 @@ static ULONG _checkHost(PCHECKDATA pData, PSZ pszDomain)
 
     if ( ulRes != SPF_NONE )
     {
-      lnkseqFree( &lsMechanisms, PMECHANISM, debugFree );
+      lnkseqFree( &lsMechanisms, PMECHANISM, hfree );
       return ulRes; 
     }
 
@@ -658,7 +659,7 @@ static ULONG _checkHost(PCHECKDATA pData, PSZ pszDomain)
           // apcModifiers[_TOKEN_REDIRECT] = NULL;
           if ( pszRedirect != NULL )
           {
-            debugFree( pszRedirect );
+            hfree( pszRedirect );
             pszRedirect = NULL;
           }
 
@@ -730,7 +731,7 @@ static ULONG _checkHost(PCHECKDATA pData, PSZ pszDomain)
           }
 
           {
-            PCHAR      pcARes = debugMAlloc( 512 );
+            PCHAR      pcARes = hmalloc( 512 );
             ULONG      cARes;
 
             for( pcNSRes = &pData->acNSRes; ( cNSRes > 0 ) && !fMuch;
@@ -760,7 +761,7 @@ static ULONG _checkHost(PCHECKDATA pData, PSZ pszDomain)
               }
             }
 
-            debugFree( pcARes );
+            hfree( pcARes );
           }
           break;
 
@@ -888,11 +889,11 @@ static ULONG _checkHost(PCHECKDATA pData, PSZ pszDomain)
   }
 
   if ( pszRedirect != NULL )
-    debugFree( pszRedirect );
+    hfree( pszRedirect );
   if ( pszExp != NULL )
-    debugFree( pszExp );
+    hfree( pszExp );
 
-  lnkseqFree( &lsMechanisms, PMECHANISM, debugFree );
+  lnkseqFree( &lsMechanisms, PMECHANISM, hfree );
 
   return ulRes;
 }

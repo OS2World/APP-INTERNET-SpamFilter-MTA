@@ -17,6 +17,7 @@
 extern PSZ apszMBCResult[10];
 #endif
 
-ULONG MailBoxCheck(struct in_addr stServer, PSZ pszMailAddr);
+ULONG MailBoxCheck(struct in_addr stServer, USHORT usPort, PSZ pszMailAddr,
+                   BOOL fFullCheck);
 
 #endif // MBOXCHK_H

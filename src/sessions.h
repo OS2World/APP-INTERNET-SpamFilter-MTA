@@ -54,6 +54,7 @@ VOID sessAddRecepient(PSESS pSess, ULONG cbAddr, PCHAR pcAddr);
 VOID sessClearRecepient(PSESS pSess);
 BOOL sessAddScore(PSESS pSess, LONG lScore, PSZ pszFormat, ...);
 BOOL sessClientListed(PSESS pSess, PLINKSEQ plsHostList);
+BOOL sessGetInaddr(PSZ pszId, struct in_addr *pInAddr);
 ULONG sessCount();
 ULONG sessIPCount(struct in_addr stInAddr);
 VOID sessSetCommandTimeout(ULONG ulCommandTimeout);
